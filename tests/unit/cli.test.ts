@@ -5,6 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseArgs, run, usage } from "../../src/cli.js";
+import type { ResolvedConfig } from "../../src/types.js";
+
+const stubConfig: ResolvedConfig = {
+  cacheDir: ".doc-cache",
+  llm: {
+    provider: "openai",
+    apiKey: "test-key",
+    baseUrl: "https://api.example.com/v1",
+    defaultModel: "gpt-test",
+  },
+  cache: {
+    enabled: true,
+  },
+};
 
 class StringWritable extends Writable {
   chunks: string[] = [];
@@ -30,6 +44,7 @@ interface Harness {
   readStdin: ReturnType<typeof vi.fn>;
   writeFile: ReturnType<typeof vi.fn>;
   getPackageVersion: () => string;
+  loadConfigFn: (opts: unknown) => Promise<ResolvedConfig>;
 }
 
 function makeHarness(version = "9.9.9"): Harness {
@@ -42,6 +57,7 @@ function makeHarness(version = "9.9.9"): Harness {
     readStdin: vi.fn(),
     writeFile: vi.fn(),
     getPackageVersion: () => version,
+    loadConfigFn: async () => stubConfig,
   };
 }
 
@@ -412,6 +428,7 @@ describe("run", () => {
     const code = await run([input], {
       stdout: new StringWritable() as unknown as NodeJS.WritableStream,
       stderr: new StringWritable() as unknown as NodeJS.WritableStream,
+      loadConfigFn: async () => stubConfig,
     });
 
     expect(code).toBe(0);
@@ -571,6 +588,7 @@ describe("filesystem integration (real disk, controlled permissions)", () => {
     const code = await run(["--output", output, input], {
       stdout: stdout as unknown as NodeJS.WritableStream,
       stderr: stderr as unknown as NodeJS.WritableStream,
+      loadConfigFn: async () => stubConfig,
     });
 
     expect(code).toBe(0);

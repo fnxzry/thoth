@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +13,13 @@ import {
   clear,
   DirectiveRegistryError,
 } from "../../src/directives/index.js";
-import { DirectiveImpl } from "../../src/types.js";
+import { DirectiveImpl, LlmProvider } from "../../src/types.js";
+
+const stubLlmProvider: LlmProvider = {
+  complete: async () => {
+    throw new Error("stubLlmProvider should not be called in this test");
+  },
+};
 
 describe("engine: static-only rendering", () => {
   it("renders a static-only template byte-identically to its source", async () => {
@@ -21,6 +27,7 @@ describe("engine: static-only rendering", () => {
     const result = await render(template, {
       templateDir: "/tmp",
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe(template);
   });
@@ -30,6 +37,7 @@ describe("engine: static-only rendering", () => {
     const result = await render(template, {
       templateDir: "/tmp",
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe(template);
   });
@@ -39,6 +47,7 @@ describe("engine: static-only rendering", () => {
     const result = await render(template, {
       templateDir: "/tmp",
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe(template);
   });
@@ -47,6 +56,7 @@ describe("engine: static-only rendering", () => {
     const result = await render("", {
       templateDir: "/tmp",
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe("");
   });
@@ -72,6 +82,7 @@ describe("engine: include directive", () => {
     const result = await render(template, {
       templateDir: tmpDir,
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
 
     expect(result).toBe("before\nFILE_CONTENT\nafter");
@@ -85,6 +96,7 @@ describe("engine: include directive", () => {
     const result = await render(template, {
       templateDir: tmpDir,
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
 
     expect(result).toBe("intro\nAAA\nmiddle\nBBB\noutro");
@@ -97,6 +109,7 @@ describe("engine: include directive", () => {
     const result = await render(template, {
       templateDir: tmpDir,
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
 
     expect(result).toBe("HEAD\ntail");
@@ -109,6 +122,7 @@ describe("engine: include directive", () => {
     const result = await render(template, {
       templateDir: tmpDir,
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
 
     expect(result).toBe("head\nTAIL");
@@ -122,6 +136,7 @@ describe("engine: include directive", () => {
     const result = await render(template, {
       templateDir: tmpDir,
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
 
     expect(result).toBe("before\nABSOLUTE\nafter");
@@ -132,6 +147,7 @@ describe("engine: include directive", () => {
     const result = await render(template, {
       templateDir: tmpDir,
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe(template);
   });
@@ -143,6 +159,7 @@ describe("engine: static directive", () => {
     const result = await render(template, {
       templateDir: "/tmp",
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe("before\nverbatim body\nafter");
   });
@@ -152,6 +169,7 @@ describe("engine: static directive", () => {
     const result = await render(template, {
       templateDir: "/tmp",
       config: defaultConfig,
+      llmProvider: stubLlmProvider,
     });
     expect(result).toBe("before\n\nafter");
   });
@@ -164,6 +182,7 @@ describe("engine: error handling", () => {
       await render("@bogus", {
         templateDir: "/tmp",
         config: defaultConfig,
+        llmProvider: stubLlmProvider,
       });
     } catch (err) {
       caught = err;
@@ -179,6 +198,7 @@ describe("engine: error handling", () => {
       await render("static text\n@bogus\nmore text", {
         templateDir: "/tmp",
         config: defaultConfig,
+        llmProvider: stubLlmProvider,
       });
     } catch (err) {
       caught = err;
@@ -193,6 +213,7 @@ describe("engine: error handling", () => {
       await render("@llm foo\nprompt: hello\n", {
         templateDir: "/tmp",
         config: defaultConfig,
+        llmProvider: stubLlmProvider,
       });
     } catch (err) {
       caught = err;
@@ -208,6 +229,7 @@ describe("engine: error handling", () => {
       await render("hello\n@end\n", {
         templateDir: "/tmp",
         config: defaultConfig,
+        llmProvider: stubLlmProvider,
       });
     } catch (err) {
       caught = err;
@@ -236,6 +258,7 @@ describe("engine: directive context wiring", () => {
       const result = await render("@custom hello", {
         templateDir: "/work",
         config: defaultConfig,
+        llmProvider: stubLlmProvider,
       });
       expect(result).toBe("OK");
       expect(capturedTemplateDir).toBe("/work");
@@ -257,6 +280,7 @@ describe("engine: directive context wiring", () => {
         render("@custom x", {
           templateDir: "/tmp",
           config: defaultConfig,
+          llmProvider: stubLlmProvider,
         }),
       ).rejects.toThrowError(/boom from directive/);
     } finally {
@@ -268,6 +292,63 @@ describe("engine: directive context wiring", () => {
 // Sanity check: DirectiveRegistryError is what the engine catches for unknown
 // directives; this test guards against a future refactor that changes the
 // error class used.
+describe("engine: llm directive wiring", () => {
+  let renderFresh: typeof import("../../src/engine.js").render;
+  let defaultConfigFresh: typeof import("../../src/engine.js").defaultConfig;
+
+  beforeEach(async () => {
+    clear();
+    vi.resetModules();
+    const engine = await import("../../src/engine.js");
+    renderFresh = engine.render;
+    defaultConfigFresh = engine.defaultConfig;
+  });
+
+  it("forwards LlmProvider.complete through the engine's callLlm", async () => {
+    let captured: { system: string; user: string; model: string } | undefined;
+
+    const capturingProvider: LlmProvider = {
+      complete: async (req) => {
+        captured = { ...req };
+        return { content: "LLM_RESULT" };
+      },
+    };
+
+    const template = "before\n@llm id\nprompt: hi\n@end\nafter";
+    const result = await renderFresh(template, {
+      templateDir: "/tmp",
+      config: defaultConfigFresh,
+      llmProvider: capturingProvider,
+    });
+
+    expect(result).toBe("before\nLLM_RESULT\nafter");
+    expect(captured).toBeDefined();
+    expect(captured!.user).toBe("hi");
+    expect(captured!.model).toBe(defaultConfigFresh.llm.defaultModel);
+  });
+
+  it("passes the configured model through when the directive does not specify one", async () => {
+    let capturedModel: string | undefined;
+    const provider: LlmProvider = {
+      complete: async (req) => {
+        capturedModel = req.model;
+        return { content: "ok" };
+      },
+    };
+
+    const cfg = {
+      ...defaultConfigFresh,
+      llm: { ...defaultConfigFresh.llm, defaultModel: "configured-model" },
+    };
+    await renderFresh("@llm id\nprompt: hi\n@end", {
+      templateDir: "/tmp",
+      config: cfg,
+      llmProvider: provider,
+    });
+    expect(capturedModel).toBe("configured-model");
+  });
+});
+
 describe("engine: directive registry error contract", () => {
   it("DirectiveRegistryError is what get() throws for unknown names", () => {
     clear();

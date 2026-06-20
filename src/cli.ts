@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 
-import { render, EngineError, defaultConfig } from "./engine.js";
+import { render, EngineError } from "./engine.js";
+import { loadConfig, ConfigError } from "./config.js";
+import { OpenAIProvider } from "./llm/openai.js";
 
 export interface CliDeps {
   stdout: NodeJS.WritableStream;
@@ -17,6 +19,7 @@ export interface CliDeps {
   readStdin: () => Promise<string>;
   writeFile: (filePath: string, data: string) => Promise<void>;
   getPackageVersion: () => string;
+  loadConfigFn?: typeof loadConfig;
 }
 
 export interface ParsedArgs {
@@ -42,11 +45,11 @@ If <input.md> is omitted or given as "-", the template is read from
 stdin. If stdin is a terminal, thoth exits with a usage error.
 
 Options:
-  --config <path>      Path to config file (no-op in this build)
+  --config <path>      Path to config file (overrides <TOOL>_CONFIG env and default search path)
   --check              Drift detection (no-op in this build)
   --output <path>      Write output to <path> instead of stdout
-  --cache-dir <path>   Override cache directory (no-op in this build)
-  --no-cache           Bypass the cache (no-op in this build)
+  --cache-dir <path>   Override cache directory
+  --no-cache           Bypass the cache
   --help               Print this help and exit
   --version            Print the version and exit
 
@@ -245,8 +248,29 @@ export async function run(
 
   let rendered: string;
   try {
-    rendered = await render(text, { templateDir, config: defaultConfig });
+    const loadConfigFn = deps.loadConfigFn ?? loadConfig;
+    const config = await loadConfigFn({
+      binaryName: "thoth",
+      cli: {
+        ...(args.config !== undefined ? { configPath: args.config } : {}),
+        ...(args.cacheDir !== undefined ? { cacheDir: args.cacheDir } : {}),
+        ...(args.noCache ? { noCache: true } : {}),
+      },
+    });
+    const provider = new OpenAIProvider({
+      apiKey: config.llm.apiKey,
+      baseUrl: config.llm.baseUrl,
+    });
+    rendered = await render(text, {
+      templateDir,
+      config,
+      llmProvider: provider,
+    });
   } catch (err: unknown) {
+    if (err instanceof ConfigError) {
+      deps.stderr.write(`error: ${err.message}\n`);
+      return 1;
+    }
     if (err instanceof EngineError) {
       deps.stderr.write(`error: ${err.message}\n`);
       return 1;

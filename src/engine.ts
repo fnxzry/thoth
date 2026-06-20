@@ -1,8 +1,12 @@
 import "./directives/all.js";
 
+import { isAbsolute, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+
 import { parse, ParseError } from "./parser.js";
 import { DirectiveContext, ResolvedConfig } from "./types.js";
 import { get as getDirective, DirectiveRegistryError } from "./directives/index.js";
+import type { LlmProvider } from "./llm/provider.js";
 
 export class EngineError extends Error {
   public readonly line: number | undefined;
@@ -17,6 +21,7 @@ export class EngineError extends Error {
 export interface RenderContext {
   templateDir: string;
   config: ResolvedConfig;
+  llmProvider: LlmProvider;
 }
 
 export const defaultConfig: ResolvedConfig = {
@@ -31,6 +36,11 @@ export const defaultConfig: ResolvedConfig = {
     enabled: true,
   },
 };
+
+async function loadContextFile(templateDir: string, path: string): Promise<string> {
+  const resolved = isAbsolute(path) ? path : resolve(templateDir, path);
+  return await readFile(resolved, { encoding: "utf8" });
+}
 
 export async function render(
   template: string,
@@ -69,12 +79,14 @@ export async function render(
 
       const directiveCtx: DirectiveContext = {
         block,
-        resolveContext: async () => new Map<string, string>(),
-        callLlm: async () => {
-          throw new EngineError(
-            "callLlm is not implemented in this build",
-          );
+        resolveContext: async (paths) => {
+          const out = new Map<string, string>();
+          for (const p of paths) {
+            out.set(p, await loadContextFile(ctx.templateDir, p));
+          }
+          return out;
         },
+        callLlm: (req) => ctx.llmProvider.complete(req),
         config: ctx.config,
         templateDir: ctx.templateDir,
       };
