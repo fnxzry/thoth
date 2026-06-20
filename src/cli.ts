@@ -14,6 +14,7 @@ export interface CliDeps {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
   readFile: (filePath: string) => Promise<string>;
+  readStdin: () => Promise<string>;
   writeFile: (filePath: string, data: string) => Promise<void>;
   getPackageVersion: () => string;
 }
@@ -33,9 +34,12 @@ export type ParseResult =
   | { ok: true; args: ParsedArgs }
   | { ok: false; error: string };
 
-const USAGE = `Usage: thoth [options] <input.md>
+const USAGE = `Usage: thoth [options] [<input.md>|-]
 
 Render a thoth template to stdout (or to --output if given).
+
+If <input.md> is omitted or given as "-", the template is read from
+stdin. If stdin is a terminal, thoth exits with a usage error.
 
 Options:
   --config <path>      Path to config file (no-op in this build)
@@ -120,7 +124,9 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         if (args.input !== undefined) {
           return { ok: false, error: `unexpected positional argument: ${arg}` };
         }
-        args.input = arg;
+        if (arg !== "-") {
+          args.input = arg;
+        }
         i++;
         break;
     }
@@ -129,11 +135,32 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   return { ok: true, args };
 }
 
+function defaultReadStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (process.stdin.isTTY) {
+      const err = Object.assign(
+        new Error("no input file given and stdin is a terminal"),
+        { code: "EISTTY" as const },
+      );
+      reject(err);
+      return;
+    }
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk: string) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", (err) => reject(err));
+  });
+}
+
 function defaultDeps(): CliDeps {
   return {
     stdout: process.stdout,
     stderr: process.stderr,
     readFile: (filePath) => readFileAsync(filePath, { encoding: "utf8" }),
+    readStdin: defaultReadStdin,
     writeFile: (filePath, data) => writeFileAsync(filePath, data, { encoding: "utf8" }),
     getPackageVersion: () => {
       const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
@@ -187,23 +214,37 @@ export async function run(
     deps.stdout.write(`${deps.getPackageVersion()}\n`);
     return 0;
   }
-  if (!args.input) {
-    deps.stderr.write(`error: missing input file\n\n${USAGE}`);
-    return 2;
-  }
 
   let text: string;
-  try {
-    text = await deps.readFile(args.input);
-  } catch (err) {
-    const { message, code } = formatFsError(err, args.input);
-    deps.stderr.write(message);
-    return code;
+  let templateDir: string;
+  if (args.input === undefined) {
+    try {
+      text = await deps.readStdin();
+    } catch (err) {
+      const errCode = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (errCode === "EISTTY") {
+        const detail = err instanceof Error ? err.message : String(err);
+        deps.stderr.write(`error: ${detail}\n\n${USAGE}`);
+        return 2;
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      deps.stderr.write(`error: ${detail}\n`);
+      return 1;
+    }
+    templateDir = process.cwd();
+  } else {
+    try {
+      text = await deps.readFile(args.input);
+    } catch (err) {
+      const { message, code } = formatFsError(err, args.input);
+      deps.stderr.write(message);
+      return code;
+    }
+    templateDir = dirname(resolvePath(args.input));
   }
 
   let rendered: string;
   try {
-    const templateDir = dirname(resolvePath(args.input));
     rendered = await render(text, { templateDir, config: defaultConfig });
   } catch (err: unknown) {
     if (err instanceof EngineError) {
@@ -222,7 +263,7 @@ export async function run(
       deps.stdout.write(rendered);
     }
   } catch (err) {
-    const target = args.output ?? args.input;
+    const target = args.output ?? args.input ?? "stdin";
     const { message, code } = formatFsError(err, target);
     deps.stderr.write(message);
     return code;

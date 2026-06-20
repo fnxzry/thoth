@@ -27,6 +27,7 @@ interface Harness {
   stdout: StringWritable;
   stderr: StringWritable;
   readFile: ReturnType<typeof vi.fn>;
+  readStdin: ReturnType<typeof vi.fn>;
   writeFile: ReturnType<typeof vi.fn>;
   getPackageVersion: () => string;
 }
@@ -38,6 +39,7 @@ function makeHarness(version = "9.9.9"): Harness {
     stdout,
     stderr,
     readFile: vi.fn(),
+    readStdin: vi.fn(),
     writeFile: vi.fn(),
     getPackageVersion: () => version,
   };
@@ -67,6 +69,13 @@ describe("usage", () => {
     expect(text).toContain("2");
     expect(text).toContain("3");
   });
+
+  it("documents that the input file is optional and stdin is used when omitted", () => {
+    const text = usage();
+    expect(text).toContain("[<input.md>|-]");
+    expect(text).toContain("stdin");
+    expect(text).toContain("terminal");
+  });
 });
 
 describe("parseArgs", () => {
@@ -87,6 +96,14 @@ describe("parseArgs", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.args.input).toBe("input.md");
+    }
+  });
+
+  it("treats '-' as the stdin marker, leaving input undefined", () => {
+    const result = parseArgs(["-"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.args.input).toBeUndefined();
     }
   });
 
@@ -233,13 +250,31 @@ describe("run", () => {
     expect(harness.stdout.text).toBe("");
   });
 
-  it("exits 2 and prints usage to stderr with no args", async () => {
+  it("exits 2 with a stdin-TTY error and usage text when no args and stdin is a TTY", async () => {
     const harness = makeHarness();
+    const err = Object.assign(new Error("stdin is a terminal"), {
+      code: "EISTTY",
+    });
+    harness.readStdin.mockRejectedValue(err);
+
     const code = await run([], harness);
+
     expect(code).toBe(2);
+    expect(harness.readStdin).toHaveBeenCalled();
+    expect(harness.readFile).not.toHaveBeenCalled();
     expect(harness.stderr.text).toContain("error:");
     expect(harness.stderr.text).toContain("Usage: thoth");
     expect(harness.stdout.text).toBe("");
+  });
+
+  it("exits 1 when reading from stdin fails with a non-TTY error", async () => {
+    const harness = makeHarness();
+    harness.readStdin.mockRejectedValue(new Error("stream blew up"));
+
+    const code = await run([], harness);
+
+    expect(code).toBe(1);
+    expect(harness.stderr.text).toContain("stream blew up");
   });
 
   it("exits 0 and prints usage to stdout for --help", async () => {
@@ -383,6 +418,120 @@ describe("run", () => {
   });
 });
 
+describe("stdin input", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "thoth-cli-stdin-"));
+  });
+
+  afterEach(() => {
+    if (existsSync(tmpDir)) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the template from stdin when no positional argument is given", async () => {
+    const harness = makeHarness();
+    harness.readStdin.mockResolvedValue("from stdin\n");
+
+    const code = await run([], harness);
+
+    expect(code).toBe(0);
+    expect(harness.readStdin).toHaveBeenCalledTimes(1);
+    expect(harness.readFile).not.toHaveBeenCalled();
+    expect(harness.stdout.text).toBe("from stdin\n");
+    expect(harness.stderr.text).toBe("");
+  });
+
+  it("reads the template from stdin when '-' is given as the positional argument", async () => {
+    const harness = makeHarness();
+    harness.readStdin.mockResolvedValue("from stdin via dash\n");
+
+    const code = await run(["-"], harness);
+
+    expect(code).toBe(0);
+    expect(harness.readStdin).toHaveBeenCalledTimes(1);
+    expect(harness.readFile).not.toHaveBeenCalled();
+    expect(harness.stdout.text).toBe("from stdin via dash\n");
+  });
+
+  it("produces byte-identical output from '-' and from the omitted-positional form", async () => {
+    const harnessDash = makeHarness();
+    harnessDash.readStdin.mockResolvedValue("same template\n");
+    await run(["-"], harnessDash);
+
+    const harnessBare = makeHarness();
+    harnessBare.readStdin.mockResolvedValue("same template\n");
+    await run([], harnessBare);
+
+    expect(harnessDash.stdout.text).toBe(harnessBare.stdout.text);
+  });
+
+  it("writes stdin-rendered output to --output when given", async () => {
+    const output = join(tmpDir, "stdin-out.md");
+    const harness = makeHarness();
+    harness.readStdin.mockResolvedValue("piped output");
+    harness.writeFile.mockResolvedValue(undefined);
+
+    const code = await run(["--output", output], harness);
+
+    expect(code).toBe(0);
+    expect(harness.readStdin).toHaveBeenCalledTimes(1);
+    expect(harness.readFile).not.toHaveBeenCalled();
+    expect(harness.writeFile).toHaveBeenCalledWith(output, "piped output");
+    expect(harness.stdout.text).toBe("");
+  });
+
+  it("uses process.cwd() as templateDir when input comes from stdin", async () => {
+    const cwdDir = mkdtempSync(join(tmpdir(), "thoth-stdin-cwd-"));
+    const includeName = "stdin-include-target.md";
+    writeFileSync(join(cwdDir, includeName), "FROM_CWD_INCLUDE", "utf8");
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(cwdDir);
+    try {
+      const harness = makeHarness();
+      harness.readStdin.mockResolvedValue(
+        `prefix\n@include ${includeName}\nsuffix`,
+      );
+
+      const code = await run([], harness);
+
+      expect(code).toBe(0);
+      expect(harness.stdout.text).toBe(
+        "prefix\nFROM_CWD_INCLUDE\nsuffix",
+      );
+    } finally {
+      cwdSpy.mockRestore();
+      rmSync(cwdDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the file's directory as templateDir when input is a file, not cwd", async () => {
+    const cwdDir = mkdtempSync(join(tmpdir(), "thoth-file-cwd-"));
+    const fileDir = mkdtempSync(join(tmpdir(), "thoth-file-dir-"));
+    writeFileSync(join(cwdDir, "includeme.md"), "FROM_CWD", "utf8");
+    writeFileSync(join(fileDir, "includeme.md"), "FROM_FILE_DIR", "utf8");
+    const inputPath = join(fileDir, "template.md");
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(cwdDir);
+    try {
+      const harness = makeHarness();
+      harness.readFile.mockImplementation(async (p: string) => {
+        expect(p).toBe(inputPath);
+        return "@include includeme.md";
+      });
+
+      const code = await run([inputPath], harness);
+
+      expect(code).toBe(0);
+      expect(harness.stdout.text).toBe("FROM_FILE_DIR");
+    } finally {
+      cwdSpy.mockRestore();
+      rmSync(cwdDir, { recursive: true, force: true });
+      rmSync(fileDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("filesystem integration (real disk, controlled permissions)", () => {
   let tmpDir: string;
 
@@ -453,5 +602,21 @@ describe("filesystem integration (real disk, controlled permissions)", () => {
     } finally {
       chmodSync(input, 0o600);
     }
+  });
+
+  it("rejects with EISTTY when the real process.stdin is a terminal", async () => {
+    if (!process.stdin.isTTY) return;
+    const stdout = new StringWritable();
+    const stderr = new StringWritable();
+
+    const code = await run([], {
+      stdout: stdout as unknown as NodeJS.WritableStream,
+      stderr: stderr as unknown as NodeJS.WritableStream,
+    });
+
+    expect(code).toBe(2);
+    expect(stderr.text).toContain("error:");
+    expect(stderr.text).toContain("Usage: thoth");
+    expect(stdout.text).toBe("");
   });
 });

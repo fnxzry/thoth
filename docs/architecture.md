@@ -190,13 +190,14 @@ Where `<TOOL_BINARY_UPPER>` is the binary name uppercased with non-alphanumerics
 ## 8. CLI grammar
 
 ```
-<T> [--config <path>] [--check] [--output <path>] [--cache-dir <path>] [--no-cache] <input.md>
+<T> [--config <path>] [--check] [--output <path>] [--cache-dir <path>] [--no-cache] [<input.md>|-]
 
 <T> --help
 <T> --version
 ```
 
-- `<input.md>` is required (unless `--help` or `--version`).
+- `<input.md>` is optional. When omitted (or given as the explicit `-` marker), the template is read from stdin. If stdin is a terminal, the tool exits with code 2 (usage error) rather than blocking.
+- When the template comes from stdin, relative paths inside `@include` and `@llm context:` resolve against `process.cwd()` (Unix convention). When it comes from a file, they resolve against the file's directory.
 - If `--output` is omitted, output goes to stdout.
 - `--check` reads the file at `--output` (or fails if `--output` is omitted), renders to memory, and exits non-zero if the rendered bytes differ. Used for drift detection.
 - `--no-cache` bypasses the cache (always calls the provider). Useful for forced refresh.
