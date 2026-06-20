@@ -1,7 +1,7 @@
 ---
 id: 04
 type: task
-status: open
+status: in-progress
 description: Implement a minimal CLI that reads a text file and writes it to stdout, proving the CLI shape end-to-end before any directive logic lands.
 ---
 
