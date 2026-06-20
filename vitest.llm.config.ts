@@ -6,5 +6,6 @@ export default defineConfig({
     environment: "node",
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    passWithNoTests: true,
   },
 });

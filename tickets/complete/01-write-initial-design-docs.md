@@ -1,7 +1,7 @@
 ---
 id: 01
 type: task
-status: open
+status: complete
 description: Author the initial design docs (concept, architecture, testing, ticketing-system, index) so the implementation has a written contract to follow.
 ---
 
