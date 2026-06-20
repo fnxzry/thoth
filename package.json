@@ -1,0 +1,42 @@
+{
+  "name": "thoth",
+  "version": "0.1.0",
+  "description": "Text generation tool with file includes and LLM-summarized blocks.",
+  "type": "module",
+  "bin": {
+    "thoth": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:docs": "thoth --config ./docs.config.json AGENTS.md",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:llm": "vitest run --config vitest.llm.config.ts",
+    "lint": "eslint src tests",
+    "dev": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "openai": "^4.52.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "@typescript-eslint/parser": "^8.61.1",
+    "eslint": "^9.39.4",
+    "globals": "^15.15.0",
+    "tsx": "^4.11.2",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.61.1",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
