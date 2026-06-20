@@ -2,10 +2,13 @@
 
 import { readFile as readFileAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { realpathSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
+
+import { render, EngineError, defaultConfig } from "./engine.js";
 
 export interface CliDeps {
   stdout: NodeJS.WritableStream;
@@ -198,11 +201,25 @@ export async function run(
     return code;
   }
 
+  let rendered: string;
+  try {
+    const templateDir = dirname(resolvePath(args.input));
+    rendered = await render(text, { templateDir, config: defaultConfig });
+  } catch (err: unknown) {
+    if (err instanceof EngineError) {
+      deps.stderr.write(`error: ${err.message}\n`);
+      return 1;
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    deps.stderr.write(`error: ${detail}\n`);
+    return 1;
+  }
+
   try {
     if (args.output !== undefined) {
-      await deps.writeFile(args.output, text);
+      await deps.writeFile(args.output, rendered);
     } else {
-      deps.stdout.write(text);
+      deps.stdout.write(rendered);
     }
   } catch (err) {
     const target = args.output ?? args.input;
