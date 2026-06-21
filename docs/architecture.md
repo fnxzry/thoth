@@ -42,11 +42,12 @@ Each module owns one concern. `parser.ts` and `cache.ts` are the only modules wi
 // A parsed chunk of the template. Either static text or a directive invocation.
 type Block =
   | { kind: "static"; text: string }
-  | { kind: "directive"; name: string; id: string;
-      attributes: Record<string, unknown>; body: string };
+  | { kind: "directive"; name: string; label: string;
+      primaryParameter: string; body: string };
 
 // What a directive receives and returns. body is the raw text inside the
-// directive's @<name>...@end block (excluding the @<name> and @end lines).
+// directive's body block (excluding the @<directive> header line and the
+// @end line).
 interface DirectiveContext {
   block: Block;                       // the directive block being rendered
   resolveContext(paths: string[]): Promise<Map<string, string>>;
@@ -93,25 +94,53 @@ interface ResolvedConfig {
 
 ## 4. Directive grammar
 
-A directive block has the form:
+Each directive has a **parameter schema**: the set of named and positional
+parameters it accepts. One parameter, if the directive defines one, is the
+**primary parameter**. It can be set inline on the one-liner form, or in
+the body YAML on the multi-line form. Any other parameters are set in the
+body YAML.
+
+A directive MAY also carry an optional **label**: a short identifier for
+the block (used in cache keys, error messages, and cross-references).
+Labels are set on the directive line, after a colon.
+
+Forms:
 
 ```
-@<name>[ <id>] [<key>=<value>]*:
-<key>=<value>          # optional, repeated
-[prompt: |
-<prompt text on one or more lines>]
-[context:
-  - <path relative to template dir>
-  - <path>...]
+@<directive> <primary-parameter>            # one-liner: primary parameter only
+@<directive>:<label> <primary-parameter>    # one-liner: label + primary parameter
+@<directive>                                # multi-line: body sets all parameters
+  <parameter>: <value>
+  ...
+@end
+@<directive>:<label>                        # multi-line: label + body
+  <parameter>: <value>
+  ...
 @end
 ```
+
+A directive MAY define a primary parameter; it is not required to. If a
+directive has no primary parameter, only the multi-line form is
+available. Labels are always optional, on both forms.
+
+Built-in directives:
+
+- `@include <path>` — primary parameter is the file path to inline.
+  `@include` requires a path, so a one-liner is the natural form.
+- `@llm <prompt>` — primary parameter is the prompt. Body parameters:
+  `context:` (list of file paths), `model:` (model override).
+  The label identifies the block for caching.
+- `@static` — the body is the verbatim text to inline; no primary
+  parameter, so only multi-line form.
 
 Concrete examples:
 
 ```
-@include doc-summary
+@include docs/summary.md
 
-@llm architecture-summary
+@llm:summary-section Summarize the file foo.txt
+
+@llm:architecture-summary
 context:
   - docs/architecture.md
 prompt: |
@@ -119,7 +148,7 @@ prompt: |
 @end
 ```
 
-The `static` directive is implicit: any text not inside a `@<name>...@end` block is treated as static.
+The `static` directive is implicit: any text not inside a `@<directive>...@end` block is treated as static.
 
 Directive registry contract:
 
