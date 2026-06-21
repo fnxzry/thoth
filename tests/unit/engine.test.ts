@@ -211,7 +211,14 @@ describe("engine: llm directive end-to-end", () => {
     vi.resetModules();
     const engine = await import("../../src/engine.js");
     renderFresh = engine.render;
-    defaultConfigFresh = engine.defaultConfig;
+    // Tests in this block exercise the directive's provider call, not the
+    // cache. Cache is disabled so a populated cache from one test does not
+    // cause a later test to short-circuit the provider. Cache behavior is
+    // covered by the separate caching suite.
+    defaultConfigFresh = {
+      ...engine.defaultConfig,
+      cache: { enabled: false },
+    };
   });
 
   it("forwards LlmProvider.complete through the engine's callLlm", async () => {

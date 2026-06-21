@@ -365,14 +365,71 @@ describe("run", () => {
     expect(harness.stderr.text).toContain("--config");
   });
 
-  it("accepts --check without using it", async () => {
+  it("rejects --check without --output as a usage error", async () => {
     const input = file("input.md", "data");
     const harness = makeHarness();
     harness.readFile.mockResolvedValue("data");
 
     const code = await run(["--check", input], harness);
+    expect(code).toBe(2);
+    expect(harness.stderr.text).toContain("--check");
+    expect(harness.stderr.text).toContain("--output");
+    expect(harness.stdout.text).toBe("");
+  });
+
+  it("--check with --output exits 0 when rendered output matches", async () => {
+    const input = file("input.md", "rendered content");
+    const reference = file("reference.md", "rendered content");
+    const harness = makeHarness();
+    harness.readFile.mockImplementation(async (p: string) => {
+      if (p === input) return "rendered content";
+      if (p === reference) return "rendered content";
+      throw new Error(`unexpected read ${p}`);
+    });
+
+    const code = await run(["--check", "--output", reference, input], harness);
+
     expect(code).toBe(0);
-    expect(harness.stdout.text).toBe("data");
+    expect(harness.stdout.text).toBe("");
+    expect(harness.stderr.text).toBe("");
+    expect(harness.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("--check with --output exits 3 and writes a unified diff on mismatch", async () => {
+    const input = file("input.md", "fresh content");
+    const reference = file("reference.md", "stale content");
+    const harness = makeHarness();
+    harness.readFile.mockImplementation(async (p: string) => {
+      if (p === input) return "fresh content";
+      if (p === reference) return "stale content";
+      throw new Error(`unexpected read ${p}`);
+    });
+
+    const code = await run(["--check", "--output", reference, input], harness);
+
+    expect(code).toBe(3);
+    expect(harness.stdout.text).toBe("");
+    expect(harness.stderr.text).toContain("---");
+    expect(harness.stderr.text).toContain("+++");
+    expect(harness.stderr.text).toContain("@@");
+    expect(harness.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("--check exits 2 when --output file does not exist (ENOENT)", async () => {
+    const input = file("input.md", "data");
+    const missing = join(tmpDir, "missing-reference.md");
+    const harness = makeHarness();
+    harness.readFile.mockImplementation(async (p: string) => {
+      if (p === input) return "data";
+      const err = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      throw err;
+    });
+
+    const code = await run(["--check", "--output", missing, input], harness);
+
+    expect(code).toBe(2);
+    expect(harness.stderr.text).toContain(missing);
+    expect(harness.stderr.text).toContain("no such file");
   });
 
   it("accepts --no-cache without using it", async () => {

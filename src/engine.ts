@@ -7,6 +7,7 @@ import { parse, ParseError } from "./parser.js";
 import { DirectiveContext, ResolvedConfig } from "./types.js";
 import { get as getDirective, DirectiveRegistryError } from "./directives/index.js";
 import type { LlmProvider } from "./llm/provider.js";
+import { LlmCache } from "./cache.js";
 
 export class EngineError extends Error {
   public readonly line: number | undefined;
@@ -22,6 +23,8 @@ export interface RenderContext {
   templateDir: string;
   config: ResolvedConfig;
   llmProvider: LlmProvider;
+  cache?: LlmCache;
+  warn?: (msg: string) => void;
 }
 
 export const defaultConfig: ResolvedConfig = {
@@ -56,6 +59,8 @@ export async function render(
     throw err;
   }
 
+  const cache = createCache(ctx);
+
   const parts: string[] = [];
 
   for (let idx = 0; idx < blocks.length; idx++) {
@@ -89,6 +94,7 @@ export async function render(
         callLlm: (req) => ctx.llmProvider.complete(req),
         config: ctx.config,
         templateDir: ctx.templateDir,
+        ...(cache ? { cache } : {}),
       };
 
       const result = await directive(directiveCtx);
@@ -101,4 +107,15 @@ export async function render(
   }
 
   return parts.join("");
+}
+
+function createCache(ctx: RenderContext): LlmCache | undefined {
+  if (!ctx.config.cache.enabled) return undefined;
+  const cacheDir = isAbsolute(ctx.config.cacheDir)
+    ? ctx.config.cacheDir
+    : resolve(ctx.templateDir, ctx.config.cacheDir);
+  return new LlmCache({
+    cacheDir,
+    ...(ctx.warn ? { warn: ctx.warn } : {}),
+  });
 }

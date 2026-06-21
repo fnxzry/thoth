@@ -67,12 +67,15 @@ export const DirectiveResultSchema = z.object({
 
 export type DirectiveResult = z.infer<typeof DirectiveResultSchema>;
 
+import type { LlmCache } from "./cache.js";
+
 export interface DirectiveContext {
   block: Block;
   resolveContext(paths: string[]): Promise<Map<string, string>>;
   callLlm(req: LlmRequest): Promise<LlmResponse>;
   config: ResolvedConfig;
   templateDir: string;
+  cache?: LlmCache;
 }
 
 export type DirectiveImpl = (ctx: DirectiveContext) => Promise<DirectiveResult>;

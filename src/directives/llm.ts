@@ -1,6 +1,7 @@
 import { EngineError } from "../engine.js";
 import { register } from "./index.js";
 import { DirectiveImpl, DirectiveBlock } from "../types.js";
+import { computeLlmCacheKey } from "../cache.js";
 
 export class LlmError extends Error {
   public readonly line: number | undefined;
@@ -155,11 +156,29 @@ const llmDirective: DirectiveImpl = async (ctx) => {
     userPrompt = `${prompt}\n\n${sections.join("\n\n")}`;
   }
 
+  const model = bodySpec.model ?? ctx.config.llm.defaultModel;
+
   const request = {
     system: "You are a helpful assistant that produces concise, accurate output for documentation generation.",
     user: userPrompt,
-    model: bodySpec.model ?? ctx.config.llm.defaultModel,
+    model,
   };
+
+  // Consult the cache (if enabled) before calling the provider. Cache key
+  // is computed from the prompt attribute and context-file contents, so
+  // changes to either invalidate the entry.
+  if (ctx.cache && ctx.config.cache.enabled) {
+    const key = computeLlmCacheKey({
+      providerId: ctx.config.llm.provider,
+      model,
+      prompt,
+      contextFiles,
+    });
+    const hit = await ctx.cache.get(key);
+    if (hit !== null) {
+      return { text: hit.content };
+    }
+  }
 
   let response;
   try {
@@ -170,6 +189,19 @@ const llmDirective: DirectiveImpl = async (ctx) => {
       `@llm: provider call failed: ${err instanceof Error ? err.message : String(err)}`,
       { line: block.sourceLine },
     );
+  }
+
+  if (ctx.cache && ctx.config.cache.enabled) {
+    const key = computeLlmCacheKey({
+      providerId: ctx.config.llm.provider,
+      model,
+      prompt,
+      contextFiles,
+    });
+    await ctx.cache.put(key, {
+      content: response.content,
+      ...(response.usage ? { usage: response.usage } : {}),
+    });
   }
 
   return { text: response.content };

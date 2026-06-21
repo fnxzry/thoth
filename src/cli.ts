@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 import { render, EngineError } from "./engine.js";
 import { loadConfig, ConfigError } from "./config.js";
 import { OpenAIProvider } from "./llm/openai.js";
+import { unifiedDiff } from "./diff.js";
 
 export interface CliDeps {
   stdout: NodeJS.WritableStream;
@@ -46,8 +47,8 @@ stdin. If stdin is a terminal, thoth exits with a usage error.
 
 Options:
   --config <path>      Path to config file (overrides <TOOL>_CONFIG env and default search path)
-  --check              Drift detection (no-op in this build)
-  --output <path>      Write output to <path> instead of stdout
+  --check              Drift detection: render to memory, compare to --output, exit 3 if different
+  --output <path>      Write output to <path> instead of stdout (required with --check)
   --cache-dir <path>   Override cache directory
   --no-cache           Bypass the cache
   --help               Print this help and exit
@@ -218,6 +219,11 @@ export async function run(
     return 0;
   }
 
+  if (args.check && args.output === undefined) {
+    deps.stderr.write(`error: --check requires --output\n\n${USAGE}`);
+    return 2;
+  }
+
   let text: string;
   let templateDir: string;
   if (args.input === undefined) {
@@ -265,6 +271,7 @@ export async function run(
       templateDir,
       config,
       llmProvider: provider,
+      warn: (msg) => deps.stderr.write(`warning: ${msg}\n`),
     });
   } catch (err: unknown) {
     if (err instanceof ConfigError) {
@@ -278,6 +285,25 @@ export async function run(
     const detail = err instanceof Error ? err.message : String(err);
     deps.stderr.write(`error: ${detail}\n`);
     return 1;
+  }
+
+  if (args.check) {
+    // args.output is guaranteed defined here by the earlier check.
+    const outputPath = args.output as string;
+    let reference: string;
+    try {
+      reference = await deps.readFile(outputPath);
+    } catch (err) {
+      const { message, code } = formatFsError(err, outputPath);
+      deps.stderr.write(message);
+      return code;
+    }
+    if (reference === rendered) {
+      return 0;
+    }
+    const diff = unifiedDiff(reference, rendered, outputPath, "<rendered>");
+    deps.stderr.write(`${diff}\n`);
+    return 3;
   }
 
   try {
