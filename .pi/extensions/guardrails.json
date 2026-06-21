@@ -1,5 +1,57 @@
 {
   "$schema": "https://unpkg.com/@aliou/pi-guardrails@0.14.0/schema.json",
+  "policies": {
+    "rules": [
+      {
+        "id": "example-secret-env-files",
+        "name": "Secret env files",
+        "description": "Block .env files and variants",
+        "patterns": [
+          {
+            "pattern": ".env"
+          },
+          {
+            "pattern": ".env.*"
+          }
+        ],
+        "allowedPatterns": [
+          {
+            "pattern": ".env.example"
+          },
+          {
+            "pattern": "*.sample.env"
+          }
+        ],
+        "protection": "noAccess",
+        "onlyIfExists": true,
+        "enabled": true
+      },
+      {
+        "id": "example-ssh-keys",
+        "name": "SSH keys",
+        "description": "Block SSH private key files",
+        "patterns": [
+          {
+            "pattern": "*.pem"
+          },
+          {
+            "pattern": "*_rsa"
+          },
+          {
+            "pattern": "*_ed25519"
+          }
+        ],
+        "allowedPatterns": [
+          {
+            "pattern": "*.pub"
+          }
+        ],
+        "protection": "noAccess",
+        "onlyIfExists": true,
+        "enabled": true
+      }
+    ]
+  },
   "pathAccess": {
     "allowedPaths": []
   },
