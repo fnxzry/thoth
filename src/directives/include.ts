@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { register } from "./index.js";
-import { DirectiveImpl, DirectiveBlock } from "../types.js";
+import { DirectiveImpl } from "../types.js";
 
 export class IncludeError extends Error {
   public readonly line: number | undefined;
@@ -14,12 +14,11 @@ export class IncludeError extends Error {
 }
 
 const includeDirective: DirectiveImpl = async (ctx) => {
-  const block = ctx.block as DirectiveBlock;
-  const path = block.primaryParameter;
-  if (!path) {
+  const path = ctx.params.path;
+  if (typeof path !== "string" || !path) {
     throw new IncludeError(
-      `@include at line ${block.sourceLine} has no path`,
-      block.sourceLine,
+      `@include at line ${ctx.sourceLine} has no path`,
+      ctx.sourceLine,
     );
   }
 
@@ -33,23 +32,23 @@ const includeDirective: DirectiveImpl = async (ctx) => {
     if (code === "ENOENT") {
       throw new IncludeError(
         `@include: file not found: ${resolvedPath}`,
-        block.sourceLine,
+        ctx.sourceLine,
       );
     }
     if (code === "EACCES") {
       throw new IncludeError(
         `@include: permission denied: ${resolvedPath}`,
-        block.sourceLine,
+        ctx.sourceLine,
       );
     }
     const detail = err instanceof Error ? err.message : String(err);
     throw new IncludeError(
       `@include: failed to read ${resolvedPath}: ${detail}`,
-      block.sourceLine,
+      ctx.sourceLine,
     );
   }
 
   return { text };
 };
 
-register("include", includeDirective);
+register("include", "path", includeDirective);

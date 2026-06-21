@@ -27,16 +27,11 @@ describe("static directive (module side effects)", () => {
   });
 
   it("returns the block body unchanged", async () => {
-    const impl = get("static");
+    const impl = get("static").impl;
     const ctx = {
-      block: {
-        kind: "directive" as const,
-        name: "static",
-        label: "x",
-        primaryParameter: "",
-        body: "verbatim content",
-        sourceLine: 1,
-      },
+      label: "x",
+      sourceLine: 1,
+      params: { body: "verbatim content" },
       resolveContext: async () => new Map<string, string>(),
       callLlm: async () => {
         throw new Error("not implemented");
@@ -49,16 +44,11 @@ describe("static directive (module side effects)", () => {
   });
 
   it("returns empty text for empty body", async () => {
-    const impl = get("static");
+    const impl = get("static").impl;
     const ctx = {
-      block: {
-        kind: "directive" as const,
-        name: "static",
-        label: "x",
-        primaryParameter: "",
-        body: "",
-        sourceLine: 1,
-      },
+      label: "x",
+      sourceLine: 1,
+      params: { body: "" },
       resolveContext: async () => new Map<string, string>(),
       callLlm: async () => {
         throw new Error("not implemented");
@@ -71,16 +61,11 @@ describe("static directive (module side effects)", () => {
   });
 
   it("ignores the label and primary parameter", async () => {
-    const impl = get("static");
+    const impl = get("static").impl;
     const ctx = {
-      block: {
-        kind: "directive" as const,
-        name: "static",
-        label: "some-label",
-        primaryParameter: "primary-value",
-        body: "body only",
-        sourceLine: 7,
-      },
+      label: "some-label",
+      sourceLine: 7,
+      params: { body: "body only" },
       resolveContext: async () => new Map<string, string>(),
       callLlm: async () => {
         throw new Error("not implemented");
@@ -108,19 +93,14 @@ describe("include directive (module side effects)", () => {
 
   function makeCtx(
     templateDir: string,
-    primaryParameter: string,
+    path: string,
     label = "",
     sourceLine = 1,
   ) {
     return {
-      block: {
-        kind: "directive" as const,
-        name: "include",
-        label,
-        primaryParameter,
-        body: "",
-        sourceLine,
-      },
+      label,
+      sourceLine,
+      params: { path, body: "" },
       resolveContext: async () => new Map<string, string>(),
       callLlm: async () => {
         throw new Error("not implemented");
@@ -138,7 +118,7 @@ describe("include directive (module side effects)", () => {
     const path = join(tmpDir, "snippet.md");
     writeFileSync(path, "inlined content", "utf8");
 
-    const impl = get("include");
+    const impl = get("include").impl;
     const result = await impl(makeCtx(tmpDir, "snippet.md"));
     expect(result.text).toBe("inlined content");
   });
@@ -147,7 +127,7 @@ describe("include directive (module side effects)", () => {
     const path = join(tmpDir, "absolute.md");
     writeFileSync(path, "absolute content", "utf8");
 
-    const impl = get("include");
+    const impl = get("include").impl;
     const result = await impl(makeCtx(tmpDir, path));
     expect(result.text).toBe("absolute content");
   });
@@ -158,7 +138,7 @@ describe("include directive (module side effects)", () => {
     const path = join(nested, "deep.md");
     writeFileSync(path, "deep content", "utf8");
 
-    const impl = get("include");
+    const impl = get("include").impl;
     const result = await impl(makeCtx(tmpDir, "nested/deep.md"));
     expect(result.text).toBe("deep content");
   });
@@ -167,7 +147,7 @@ describe("include directive (module side effects)", () => {
     const path = join(tmpDir, "newline.md");
     writeFileSync(path, "with newline\n", "utf8");
 
-    const impl = get("include");
+    const impl = get("include").impl;
     const result = await impl(makeCtx(tmpDir, "newline.md"));
     expect(result.text).toBe("with newline\n");
   });
@@ -176,18 +156,18 @@ describe("include directive (module side effects)", () => {
     const path = join(tmpDir, "labeled.md");
     writeFileSync(path, "labeled content", "utf8");
 
-    const impl = get("include");
+    const impl = get("include").impl;
     const result = await impl(makeCtx(tmpDir, "labeled.md", "my-label"));
     expect(result.text).toBe("labeled content");
   });
 
   it("throws when the primary parameter is empty", async () => {
-    const impl = get("include");
+    const impl = get("include").impl;
     await expect(impl(makeCtx(tmpDir, ""))).rejects.toThrowError(/no path/);
   });
 
   it("names the directive and source line when the primary parameter is empty", async () => {
-    const impl = get("include");
+    const impl = get("include").impl;
     let caught: unknown;
     try {
       await impl(makeCtx(tmpDir, "", "", 42));
@@ -200,7 +180,7 @@ describe("include directive (module side effects)", () => {
   });
 
   it("throws a clear error when the referenced file does not exist", async () => {
-    const impl = get("include");
+    const impl = get("include").impl;
     await expect(impl(makeCtx(tmpDir, "missing.md"))).rejects.toThrowError(
       /file not found/,
     );
@@ -213,7 +193,7 @@ describe("include directive (module side effects)", () => {
     writeFileSync(path, "secret", "utf8");
     chmodSync(path, 0o000);
     try {
-      const impl = get("include");
+      const impl = get("include").impl;
       await expect(impl(makeCtx(tmpDir, "locked.md"))).rejects.toThrowError(
         /permission denied/,
       );

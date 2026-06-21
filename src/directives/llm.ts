@@ -1,8 +1,7 @@
 import { EngineError } from "../engine.js";
 import { register } from "./index.js";
-import { DirectiveImpl, DirectiveBlock } from "../types.js";
+import { DirectiveImpl } from "../types.js";
 import { computeLlmCacheKey } from "../cache.js";
-import { parseDirectiveBody } from "./body-parser.js";
 
 export class LlmError extends Error {
   public readonly line: number | undefined;
@@ -14,50 +13,16 @@ export class LlmError extends Error {
   }
 }
 
-const CONTEXT_ITEM_PATTERN = /^\s*-\s+(.+?)\s*$/;
-
-function extractContextPaths(body: string): string[] {
-  const lines = body.split("\n");
-  const delimIdx = lines.findIndex((l) => l === "@---");
-  const endIdx = delimIdx >= 0 ? delimIdx : lines.length;
-  const paths: string[] = [];
-  let inContext = false;
-
-  for (let i = 0; i < endIdx; i++) {
-    const line = lines[i];
-    if (/^context\s*:/.test(line)) {
-      inContext = true;
-      continue;
-    }
-    if (inContext) {
-      const match = line.match(CONTEXT_ITEM_PATTERN);
-      if (match) {
-        paths.push(match[1]);
-        continue;
-      }
-      if (line.trim() === "") continue;
-      inContext = false;
-    }
-  }
-
-  return paths;
-}
-
 const llmDirective: DirectiveImpl = async (ctx) => {
-  const block = ctx.block as DirectiveBlock;
-  const { yamlParams, primaryContent } = parseDirectiveBody(block.body, block.sourceLine);
-  const contextPaths = extractContextPaths(block.body);
-
-  // Primary parameter takes precedence over primary content (body below
-  // @--- or full body without YAML attrs), which takes precedence over
-  // the `prompt:` YAML attribute.
-  const prompt = block.primaryParameter || primaryContent || yamlParams.prompt;
+  const prompt = String(ctx.params.prompt ?? "");
   if (!prompt) {
     throw new LlmError(
-      `@llm at line ${block.sourceLine}: missing required attribute "prompt"`,
-      { line: block.sourceLine },
+      `@llm at line ${ctx.sourceLine}: missing required attribute "prompt"`,
+      { line: ctx.sourceLine },
     );
   }
+
+  const contextPaths: string[] = Array.isArray(ctx.params.context) ? ctx.params.context : [];
 
   let contextFiles: Map<string, string>;
   try {
@@ -66,7 +31,7 @@ const llmDirective: DirectiveImpl = async (ctx) => {
     if (err instanceof EngineError) throw err;
     throw new LlmError(
       `@llm: failed to load context files: ${err instanceof Error ? err.message : String(err)}`,
-      { line: block.sourceLine },
+      { line: ctx.sourceLine },
     );
   }
 
@@ -79,12 +44,12 @@ const llmDirective: DirectiveImpl = async (ctx) => {
     userPrompt = `${prompt}\n\n${sections.join("\n\n")}`;
   }
 
-  const model = yamlParams.model ?? ctx.config.llm.defaultModel;
+  const model = String(ctx.params.model ?? ctx.config.llm.defaultModel);
 
   if (model === "") {
     throw new LlmError(
-      `@llm at line ${block.sourceLine}: empty "model" attribute`,
-      { line: block.sourceLine },
+      `@llm at line ${ctx.sourceLine}: empty "model" attribute`,
+      { line: ctx.sourceLine },
     );
   }
 
@@ -94,9 +59,6 @@ const llmDirective: DirectiveImpl = async (ctx) => {
     model,
   };
 
-  // Consult the cache (if enabled) before calling the provider. Cache key
-  // is computed from the prompt attribute and context-file contents, so
-  // changes to either invalidate the entry.
   if (ctx.cache && ctx.config.cache.enabled) {
     const key = computeLlmCacheKey({
       providerId: ctx.config.llm.provider,
@@ -117,7 +79,7 @@ const llmDirective: DirectiveImpl = async (ctx) => {
     if (err instanceof EngineError) throw err;
     throw new LlmError(
       `@llm: provider call failed: ${err instanceof Error ? err.message : String(err)}`,
-      { line: block.sourceLine },
+      { line: ctx.sourceLine },
     );
   }
 
@@ -137,4 +99,4 @@ const llmDirective: DirectiveImpl = async (ctx) => {
   return { text: response.content };
 };
 
-register("llm", llmDirective);
+register("llm", "prompt", llmDirective);

@@ -5,7 +5,8 @@ import { readFile } from "node:fs/promises";
 
 import { parse, ParseError } from "./parser.js";
 import { DirectiveContext, ResolvedConfig } from "./types.js";
-import { get as getDirective, DirectiveRegistryError } from "./directives/index.js";
+import { get as getRegistration, DirectiveRegistryError } from "./directives/index.js";
+import { parseDirectiveBody } from "./directives/body-parser.js";
 import type { LlmProvider } from "./llm/provider.js";
 import { LlmCache } from "./cache.js";
 
@@ -69,9 +70,9 @@ export async function render(
     if (block.kind === "static") {
       parts.push(block.text);
     } else {
-      let directive;
+      let registration;
       try {
-        directive = getDirective(block.name);
+        registration = getRegistration(block.name);
       } catch (err) {
         if (err instanceof DirectiveRegistryError) {
           throw new EngineError(
@@ -82,8 +83,26 @@ export async function render(
         throw err;
       }
 
+      const { impl, primaryKey } = registration;
+      const parsed = parseDirectiveBody(block.body, block.sourceLine);
+      const params: Record<string, string | string[]> = {
+        ...parsed.yamlParams,
+        body: block.body,
+      };
+
+      if (primaryKey !== null) {
+        params[primaryKey] =
+          block.primaryParameter || parsed.primaryContent || String(parsed.yamlParams[primaryKey] ?? "");
+      }
+
+      if (parsed.contextPaths.length > 0) {
+        params.context = parsed.contextPaths;
+      }
+
       const directiveCtx: DirectiveContext = {
-        block,
+        label: block.label,
+        sourceLine: block.sourceLine,
+        params,
         resolveContext: async (paths) => {
           const out = new Map<string, string>();
           for (const p of paths) {
@@ -97,7 +116,7 @@ export async function render(
         ...(cache ? { cache } : {}),
       };
 
-      const result = await directive(directiveCtx);
+      const result = await impl(directiveCtx);
       parts.push(result.text);
     }
 

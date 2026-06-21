@@ -7,6 +7,7 @@ import "../../src/directives/llm.js";
 import "../../src/directives/include.js";
 import "../../src/directives/static.js";
 import { get, has, clear } from "../../src/directives/index.js";
+import { parseDirectiveBody } from "../../src/directives/body-parser.js";
 import { computeLlmCacheKey } from "../../src/cache.js";
 import { ResolvedConfig } from "../../src/types.js";
 
@@ -78,6 +79,17 @@ describe("@llm directive (multi-line body behavior)", () => {
     }
   });
 
+  function buildParams(body: string, primaryParameter: string): Record<string, string | string[]> {
+    const parsed = parseDirectiveBody(body);
+    const params: Record<string, string | string[]> = { ...parsed.yamlParams, body };
+    const resolved = primaryParameter || parsed.primaryContent || String(parsed.yamlParams.prompt ?? "");
+    params.prompt = resolved;
+    if (parsed.contextPaths.length > 0) {
+      params.context = parsed.contextPaths;
+    }
+    return params;
+  }
+
   function makeBodyCtx(opts: {
     body: string;
     sourceLine?: number;
@@ -93,14 +105,9 @@ describe("@llm directive (multi-line body behavior)", () => {
     return {
       provider,
       ctx: {
-        block: {
-          kind: "directive" as const,
-          name: "llm",
-          label: opts.label ?? "summary",
-          primaryParameter: "",
-          body: opts.body,
-          sourceLine: opts.sourceLine ?? 1,
-        },
+        label: opts.label ?? "summary",
+        sourceLine: opts.sourceLine ?? 1,
+        params: buildParams(opts.body, ""),
         resolveContext: async (paths: string[]) => {
           const out = new Map<string, string>();
           for (const p of paths) {
@@ -129,7 +136,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       body: "prompt: Summarize.",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     const result = await impl(ctx);
 
     expect(result.text).toBe("the model output");
@@ -146,7 +153,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       body: "prompt: hi",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].model).toBe(fakeConfig.llm.defaultModel);
@@ -159,7 +166,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       body: "prompt: hi\nmodel: gpt-override",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].model).toBe("gpt-override");
@@ -176,7 +183,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       },
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toContain("Summarize.");
@@ -193,7 +200,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       body: "prompt: standalone",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("standalone");
@@ -204,7 +211,7 @@ describe("@llm directive (multi-line body behavior)", () => {
     const { ctx } = makeBodyCtx({
       body: "context:\n  - doc.md\n",
     });
-    const impl = get("llm");
+    const impl = get("llm").impl;
     let caught: unknown;
     try {
       await impl(ctx);
@@ -223,7 +230,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       provider,
       body: "prompt: do something",
     });
-    const impl = get("llm");
+    const impl = get("llm").impl;
     let caught: unknown;
     try {
       await impl(ctx);
@@ -242,7 +249,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       body: "prompt: |\n  line one\n  line two\n",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("line one\nline two");
@@ -253,15 +260,16 @@ describe("@llm directive (multi-line body behavior)", () => {
     writeFileSync(docPath, "FROM_DISK", "utf8");
 
     const provider = makeStubProvider();
+    const body = "prompt: hi\ncontext:\n  - ctx-file.md";
+    const parsed = parseDirectiveBody(body);
+    const params: Record<string, string | string[]> = { ...parsed.yamlParams, body, prompt: String(parsed.yamlParams.prompt ?? "") };
+    if (parsed.contextPaths.length > 0) {
+      params.context = parsed.contextPaths;
+    }
     const ctx = {
-      block: {
-        kind: "directive" as const,
-        name: "llm",
-        label: "x",
-        primaryParameter: "",
-        body: "prompt: hi\ncontext:\n  - ctx-file.md",
-        sourceLine: 1,
-      },
+      label: "x",
+      sourceLine: 1,
+      params,
       resolveContext: async (paths: string[]) => {
         const out = new Map<string, string>();
         for (const p of paths) {
@@ -277,7 +285,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       templateDir: tmpDir,
     };
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
     expect(provider.captured[0].user).toContain("FROM_DISK");
     expect(provider.captured[0].user).toContain("----- ctx-file.md -----");
@@ -290,7 +298,7 @@ describe("@llm directive (multi-line body behavior)", () => {
       body: "prompt: |\n  first line\n  second line\n\nmodel: gpt-x\n",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].model).toBe("gpt-x");
@@ -324,17 +332,20 @@ describe("@llm directive (one-liner primary parameter)", () => {
     for (const [p, c] of Object.entries(opts.files ?? {})) {
       contextMap.set(p, c);
     }
+    const body = opts.body ?? "";
+    const parsed = parseDirectiveBody(body);
+    const params: Record<string, string | string[]> = { ...parsed.yamlParams, body };
+    // Primary key is "prompt"; precedence: primaryParameter > primaryContent > yamlParams.prompt
+    params.prompt = opts.primaryParameter || parsed.primaryContent || String(parsed.yamlParams.prompt ?? "");
+    if (parsed.contextPaths.length > 0) {
+      params.context = parsed.contextPaths;
+    }
     return {
       provider,
       ctx: {
-        block: {
-          kind: "directive" as const,
-          name: "llm",
-          label: opts.label ?? "",
-          primaryParameter: opts.primaryParameter,
-          body: opts.body ?? "",
-          sourceLine: opts.sourceLine ?? 1,
-        },
+        label: opts.label ?? "",
+        sourceLine: opts.sourceLine ?? 1,
+        params,
         resolveContext: async (paths: string[]) => {
           const out = new Map<string, string>();
           for (const p of paths) {
@@ -363,7 +374,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       primaryParameter: "summarize this document",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     const result = await impl(ctx);
 
     expect(result.text).toBe("OK");
@@ -377,7 +388,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       primaryParameter: "hello",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].model).toBe(fakeConfig.llm.defaultModel);
@@ -393,7 +404,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       primaryParameter: "say hello in one short word",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("say hello in one short word");
@@ -407,7 +418,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       body: "prompt: from-body",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("from-primary");
@@ -421,7 +432,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       body: "model: gpt-override",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("hi");
@@ -439,7 +450,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       },
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toContain("summarize");
@@ -454,7 +465,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       primaryParameter: "hello",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("hello");
@@ -467,7 +478,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       primaryParameter: "hello world",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("hello world");
@@ -482,7 +493,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       sourceLine: 7,
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     let caught: unknown;
     try {
       await impl(ctx);
@@ -505,7 +516,7 @@ describe("@llm directive (one-liner primary parameter)", () => {
       sourceLine: 3,
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     let caught: unknown;
     try {
       await impl(ctx);
@@ -524,15 +535,9 @@ describe("@llm directive (label exposure)", () => {
     try {
       const provider = makeStubProvider();
       const ctx = {
-        provider,
-        block: {
-          kind: "directive" as const,
-          name: "llm",
-          label: "irrelevant-label",
-          primaryParameter: "just-the-prompt",
-          body: "",
-          sourceLine: 1,
-        },
+        label: "irrelevant-label",
+        sourceLine: 1,
+        params: { prompt: "just-the-prompt", body: "" },
         resolveContext: async () => new Map<string, string>(),
         callLlm: async (req: { system: string; user: string; model: string }) =>
           provider.complete(req),
@@ -540,7 +545,7 @@ describe("@llm directive (label exposure)", () => {
         templateDir: tmpDir,
       };
 
-      const impl = get("llm");
+      const impl = get("llm").impl;
       await impl(ctx);
 
       expect(provider.captured[0].user).toBe("just-the-prompt");
@@ -575,17 +580,20 @@ describe("@llm directive (body-as-prompt)", () => {
     for (const [p, c] of Object.entries(opts.files ?? {})) {
       contextMap.set(p, c);
     }
+    const body = opts.body;
+    const pp = opts.primaryParameter ?? "";
+    const parsed = parseDirectiveBody(body);
+    const params: Record<string, string | string[]> = { ...parsed.yamlParams, body };
+    params.prompt = pp || parsed.primaryContent || String(parsed.yamlParams.prompt ?? "");
+    if (parsed.contextPaths.length > 0) {
+      params.context = parsed.contextPaths;
+    }
     return {
       provider,
       ctx: {
-        block: {
-          kind: "directive" as const,
-          name: "llm",
-          label: "",
-          primaryParameter: opts.primaryParameter ?? "",
-          body: opts.body,
-          sourceLine: opts.sourceLine ?? 1,
-        },
+        label: "",
+        sourceLine: opts.sourceLine ?? 1,
+        params,
         resolveContext: async (paths: string[]) => {
           const out = new Map<string, string>();
           for (const p of paths) {
@@ -614,7 +622,7 @@ describe("@llm directive (body-as-prompt)", () => {
       body: "Summarize this file in two paragraphs. Include key architectural decisions.",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     const result = await impl(ctx);
 
     expect(result.text).toBe("the model output");
@@ -630,7 +638,7 @@ describe("@llm directive (body-as-prompt)", () => {
       body: "model: gpt-4o\n@---\nSome prompt content",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("Some prompt content");
@@ -644,7 +652,7 @@ describe("@llm directive (body-as-prompt)", () => {
       body: "prompt: param-prompt\n@---\nbody-prompt",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("body-prompt");
@@ -657,7 +665,7 @@ describe("@llm directive (body-as-prompt)", () => {
       body: "prompt: yaml-only-prompt\nmodel: gpt-4o",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("yaml-only-prompt");
@@ -672,7 +680,7 @@ describe("@llm directive (body-as-prompt)", () => {
       files: { "doc.md": "DOC CONTENT" },
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toContain("Summarize the document.");
@@ -688,7 +696,7 @@ describe("@llm directive (body-as-prompt)", () => {
       body: "Some body text for prompt",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("one-liner-prompt");
@@ -701,7 +709,7 @@ describe("@llm directive (body-as-prompt)", () => {
       body: "model: gpt-override\n@---\nline one\nline two\nline three",
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     await impl(ctx);
 
     expect(provider.captured[0].user).toBe("line one\nline two\nline three");
@@ -714,7 +722,7 @@ describe("@llm directive (body-as-prompt)", () => {
       sourceLine: 7,
     });
 
-    const impl = get("llm");
+    const impl = get("llm").impl;
     let caught: unknown;
     try {
       await impl(ctx);

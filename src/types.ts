@@ -70,7 +70,9 @@ export type DirectiveResult = z.infer<typeof DirectiveResultSchema>;
 import type { LlmCache } from "./cache.js";
 
 export interface DirectiveContext {
-  block: Block;
+  label: string;
+  sourceLine: number;
+  params: Record<string, string | string[]>;
   resolveContext(paths: string[]): Promise<Map<string, string>>;
   callLlm(req: LlmRequest): Promise<LlmResponse>;
   config: ResolvedConfig;

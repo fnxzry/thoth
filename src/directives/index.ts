@@ -7,21 +7,31 @@ export class DirectiveRegistryError extends Error {
   }
 }
 
-const registry = new Map<string, DirectiveImpl>();
+interface RegistryEntry {
+  impl: DirectiveImpl;
+  primaryKey: string | null;
+}
 
-export function register(name: string, impl: DirectiveImpl): void {
+const registry = new Map<string, RegistryEntry>();
+
+export function register(name: string, primaryKey: string | null, impl: DirectiveImpl): void {
   if (registry.has(name)) {
     throw new DirectiveRegistryError(`Directive @${name} is already registered`);
   }
-  registry.set(name, impl);
+  registry.set(name, { impl, primaryKey });
 }
 
-export function get(name: string): DirectiveImpl {
-  const impl = registry.get(name);
-  if (!impl) {
+export function get(name: string): Registration {
+  const entry = registry.get(name);
+  if (!entry) {
     throw new DirectiveRegistryError(`Unknown directive @${name}`);
   }
-  return impl;
+  return entry;
+}
+
+export interface Registration {
+  impl: DirectiveImpl;
+  primaryKey: string | null;
 }
 
 export function has(name: string): boolean {

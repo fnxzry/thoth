@@ -5,6 +5,7 @@ const CONTEXT_ITEM_PATTERN = /^\s+-\s+(.+?)\s*$/;
 export interface ParsedDirectiveBody {
   yamlParams: Record<string, string>;
   primaryContent: string;
+  contextPaths: string[];
 }
 
 export class BodyParserError extends Error {
@@ -39,11 +40,12 @@ function bodyStartsWithYamlAttr(body: string): boolean {
 function parseYamlSection(
   raw: string,
   sourceLine?: number,
-): Record<string, string> {
-  if (raw === "") return {};
+): { attrs: Record<string, string>; contextPaths: string[] } {
+  if (raw === "") return { attrs: {}, contextPaths: [] };
 
   const lines = raw.split("\n");
   const attrs: Record<string, string> = {};
+  const contextPaths: string[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -80,6 +82,7 @@ function parseYamlSection(
         const ctxLine = lines[i];
         const ctxMatch = ctxLine.match(CONTEXT_ITEM_PATTERN);
         if (ctxMatch) {
+          contextPaths.push(ctxMatch[1]);
           i++;
           continue;
         }
@@ -130,7 +133,7 @@ function parseYamlSection(
     }
   }
 
-  return attrs;
+  return { attrs, contextPaths };
 }
 
 export function parseDirectiveBody(
@@ -147,14 +150,14 @@ export function parseDirectiveBody(
     const yamlSection = yamlSectionLines.join("\n");
     const primaryContent = contentLines.join("\n");
 
-    const yamlParams = parseYamlSection(yamlSection, sourceLine);
-    return { yamlParams, primaryContent };
+    const { attrs: yamlParams, contextPaths } = parseYamlSection(yamlSection, sourceLine);
+    return { yamlParams, primaryContent, contextPaths };
   }
 
   if (bodyStartsWithYamlAttr(rawBody)) {
-    const yamlParams = parseYamlSection(rawBody, sourceLine);
-    return { yamlParams, primaryContent: "" };
+    const { attrs: yamlParams, contextPaths } = parseYamlSection(rawBody, sourceLine);
+    return { yamlParams, primaryContent: "", contextPaths };
   }
 
-  return { yamlParams: {}, primaryContent: rawBody };
+  return { yamlParams: {}, primaryContent: rawBody, contextPaths: [] };
 }

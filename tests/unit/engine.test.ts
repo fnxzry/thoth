@@ -438,15 +438,13 @@ describe("engine: directive context wiring", () => {
 
     const customImpl: DirectiveImpl = async (ctx) => {
       capturedTemplateDir = ctx.templateDir;
-      if (ctx.block.kind === "directive") {
-        capturedLabel = ctx.block.label;
-        capturedPrimaryParameter = ctx.block.primaryParameter;
-      }
+      capturedLabel = ctx.label;
+      capturedPrimaryParameter = String(ctx.params.prompt ?? "");
       return { text: "OK" };
     };
 
     clear();
-    register("custom", customImpl);
+    register("custom", "prompt", customImpl);
     try {
       const result = await render("@custom:hello world", {
         templateDir: "/work",
@@ -468,7 +466,7 @@ describe("engine: directive context wiring", () => {
     };
 
     clear();
-    register("custom", customImpl);
+    register("custom", null, customImpl);
     try {
       await expect(
         render("@custom x", {
