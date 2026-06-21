@@ -550,6 +550,183 @@ describe("@llm directive (label exposure)", () => {
   });
 });
 
+describe("@llm directive (body-as-prompt)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "thoth-llm-body-prompt-"));
+  });
+
+  afterEach(() => {
+    if (existsSync(tmpDir)) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  function makeLlmCtx(opts: {
+    body: string;
+    primaryParameter?: string;
+    sourceLine?: number;
+    provider?: StubProvider;
+    files?: Record<string, string>;
+  }) {
+    const provider = opts.provider ?? makeStubProvider();
+    const contextMap = new Map<string, string>();
+    for (const [p, c] of Object.entries(opts.files ?? {})) {
+      contextMap.set(p, c);
+    }
+    return {
+      provider,
+      ctx: {
+        block: {
+          kind: "directive" as const,
+          name: "llm",
+          label: "",
+          primaryParameter: opts.primaryParameter ?? "",
+          body: opts.body,
+          sourceLine: opts.sourceLine ?? 1,
+        },
+        resolveContext: async (paths: string[]) => {
+          const out = new Map<string, string>();
+          for (const p of paths) {
+            const v = contextMap.get(p);
+            if (v === undefined) {
+              throw new Error(`test setup: no content for ${p}`);
+            }
+            out.set(p, v);
+          }
+          return out;
+        },
+        callLlm: async (req: { system: string; user: string; model: string }) =>
+          provider.complete(req),
+        config: fakeConfig,
+        templateDir: tmpDir,
+      },
+    };
+  }
+
+  it("uses the body text as the prompt when there is no prompt: YAML key", async () => {
+    const provider = makeStubProvider();
+    provider.setResponse({ content: "the model output" });
+
+    const { ctx } = makeLlmCtx({
+      provider,
+      body: "Summarize this file in two paragraphs. Include key architectural decisions.",
+    });
+
+    const impl = get("llm");
+    const result = await impl(ctx);
+
+    expect(result.text).toBe("the model output");
+    expect(provider.captured[0].user).toBe(
+      "Summarize this file in two paragraphs. Include key architectural decisions.",
+    );
+  });
+
+  it("uses body content below @--- as the prompt, with YAML params above", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeLlmCtx({
+      provider,
+      body: "model: gpt-4o\n@---\nSome prompt content",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("Some prompt content");
+    expect(provider.captured[0].model).toBe("gpt-4o");
+  });
+
+  it("prefers body content below @--- over prompt: YAML param", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeLlmCtx({
+      provider,
+      body: "prompt: param-prompt\n@---\nbody-prompt",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("body-prompt");
+  });
+
+  it("uses prompt: YAML param when body has no primary content", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeLlmCtx({
+      provider,
+      body: "prompt: yaml-only-prompt\nmodel: gpt-4o",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("yaml-only-prompt");
+    expect(provider.captured[0].model).toBe("gpt-4o");
+  });
+
+  it("combines body-as-prompt with context files from YAML section", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeLlmCtx({
+      provider,
+      body: "context:\n  - doc.md\n@---\nSummarize the document.",
+      files: { "doc.md": "DOC CONTENT" },
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toContain("Summarize the document.");
+    expect(provider.captured[0].user).toContain("----- doc.md -----");
+    expect(provider.captured[0].user).toContain("DOC CONTENT");
+  });
+
+  it("primary parameter from one-liner still takes precedence over body content", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeLlmCtx({
+      provider,
+      primaryParameter: "one-liner-prompt",
+      body: "Some body text for prompt",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("one-liner-prompt");
+  });
+
+  it("body-as-prompt with block scalar model config", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeLlmCtx({
+      provider,
+      body: "model: gpt-override\n@---\nline one\nline two\nline three",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("line one\nline two\nline three");
+    expect(provider.captured[0].model).toBe("gpt-override");
+  });
+
+  it("errors when neither prompt: YAML, body content, nor primary parameter provide a prompt", async () => {
+    const { ctx } = makeLlmCtx({
+      body: "model: gpt-4o",
+      sourceLine: 7,
+    });
+
+    const impl = get("llm");
+    let caught: unknown;
+    try {
+      await impl(ctx);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).message).toContain("prompt");
+    expect((caught as { line?: number }).line).toBe(7);
+  });
+});
+
 describe("@llm directive: registry cleanup safety", () => {
   afterEach(() => {
     clear();
