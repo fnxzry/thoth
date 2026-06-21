@@ -2,6 +2,14 @@ const ATTR_KEY_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 const ATTR_LINE_PATTERN = /^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/;
 const CONTEXT_ITEM_PATTERN = /^\s+-\s+(.+?)\s*$/;
 
+const ESCAPE_MAP: Record<string, string> = {
+  "\\": "\\",
+  '"': '"',
+  n: "\n",
+  t: "\t",
+  r: "\r",
+};
+
 export interface ParsedDirectiveBody {
   yamlParams: Record<string, string>;
   primaryContent: string;
@@ -36,6 +44,50 @@ function bodyStartsWithYamlAttr(body: string): boolean {
   const match = firstNonBlank.match(ATTR_LINE_PATTERN);
   if (!match) return false;
   return doesLineLookLikeYaml(match[1]);
+}
+
+function processYamlValue(rawValue: string, sourceLine?: number): string {
+  const trimmed = rawValue.trim();
+  if (!trimmed.startsWith('"')) return trimmed;
+
+  const inner = trimmed.slice(1);
+  const result: string[] = [];
+  let i = 0;
+  while (i < inner.length) {
+    const ch = inner[i];
+    if (ch === '"') {
+      return result.join("");
+    }
+    if (ch === "\\") {
+      i++;
+      if (i >= inner.length) {
+        throw new BodyParserError(
+          sourceLine !== undefined
+            ? `Unterminated escape sequence in quoted string at source line ${sourceLine}`
+            : "Unterminated escape sequence in quoted string",
+          { line: sourceLine },
+        );
+      }
+      const escaped = inner[i];
+      const mapped = ESCAPE_MAP[escaped];
+      if (mapped !== undefined) {
+        result.push(mapped);
+      } else {
+        result.push("\\", escaped);
+      }
+      i++;
+      continue;
+    }
+    result.push(ch);
+    i++;
+  }
+
+  throw new BodyParserError(
+    sourceLine !== undefined
+      ? `Unterminated quoted string at source line ${sourceLine}`
+      : "Unterminated quoted string",
+    { line: sourceLine },
+  );
 }
 
 function parseYamlSection(
@@ -163,6 +215,16 @@ function parseYamlSection(
     }
 
     if (rawValue === "|" || rawValue === ">") {
+      let peek = i + 1;
+      while (peek < lines.length && lines[peek].trim() === "") peek++;
+      const nextNonBlank = peek < lines.length ? lines[peek] : null;
+
+      if (nextNonBlank === null || !/^\s+\S/.test(nextNonBlank)) {
+        attrs[key] = rawValue;
+        i++;
+        continue;
+      }
+
       const block: string[] = [];
       i++;
       const baseIndentMatch = lines[i]?.match(/^(\s*)\S/);
@@ -185,7 +247,7 @@ function parseYamlSection(
       continue;
     }
 
-    attrs[key] = rawValue.trim();
+    attrs[key] = processYamlValue(rawValue, sourceLine);
     i++;
   }
 

@@ -142,4 +142,139 @@ describe("parseDirectiveBody", () => {
     expect(caught).toBeInstanceOf(BodyParserError);
     expect((caught as Error).message).toContain("42");
   });
+
+  describe("double-quoted string values", () => {
+    it("strips surrounding double quotes from a YAML param value", () => {
+      const result = parseDirectiveBody('join: " | "');
+      expect(result.yamlParams).toEqual({ join: " | " });
+      expect(result.primaryContent).toBe("");
+    });
+
+    it("strips surrounding double quotes from a YAML param value (with label)", () => {
+      const result = parseDirectiveBody('prompt: "hello world"');
+      expect(result.yamlParams).toEqual({ prompt: "hello world" });
+      expect(result.primaryContent).toBe("");
+    });
+
+    it("interprets escaped newline in double-quoted string", () => {
+      const result = parseDirectiveBody('join: "\\n"');
+      expect(result.yamlParams).toEqual({ join: "\n" });
+    });
+
+    it("interprets escaped tab in double-quoted string", () => {
+      const result = parseDirectiveBody('join: "\\t"');
+      expect(result.yamlParams).toEqual({ join: "\t" });
+    });
+
+    it("interprets escaped backslash in double-quoted string", () => {
+      const result = parseDirectiveBody('join: "\\\\"');
+      expect(result.yamlParams).toEqual({ join: "\\" });
+    });
+
+    it("interprets escaped double quote in double-quoted string", () => {
+      const result = parseDirectiveBody('join: "say \\"hi\\""');
+      expect(result.yamlParams).toEqual({ join: 'say "hi"' });
+    });
+
+    it("handles empty double-quoted string", () => {
+      const result = parseDirectiveBody('join: ""');
+      expect(result.yamlParams).toEqual({ join: "" });
+    });
+
+    it("preserves plain (unquoted) values", () => {
+      const result = parseDirectiveBody("join: , ");
+      expect(result.yamlParams).toEqual({ join: "," });
+    });
+
+    it("preserves trailing spaces in quoted values", () => {
+      const result = parseDirectiveBody('join: ", "');
+      expect(result.yamlParams).toEqual({ join: ", " });
+    });
+
+    it("unquotes double-quoted value with @--- delimiter", () => {
+      const result = parseDirectiveBody('join: " | "\n@---\ntemplate content');
+      expect(result.yamlParams).toEqual({ join: " | " });
+      expect(result.primaryContent).toBe("template content");
+    });
+
+    it("throws on unterminated double-quoted string", () => {
+      expect(() => parseDirectiveBody('join: "unterminated')).toThrow(BodyParserError);
+    });
+
+    it("throws on unterminated double-quoted string with sourceLine", () => {
+      let caught: unknown;
+      try {
+        parseDirectiveBody('join: "missing end', 10);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BodyParserError);
+      expect((caught as Error).message).toMatch(/quote/i);
+      expect((caught as Error).message).toContain("10");
+    });
+
+    it("throws on mixed quotes (starts with double, ends with single)", () => {
+      expect(() => parseDirectiveBody('join: "mixed\'')).toThrow(BodyParserError);
+    });
+  });
+
+  describe("pipe and angle-bracket as literal values", () => {
+    it("stores | as a plain value when on the same line as the key", () => {
+      const result = parseDirectiveBody("join: |");
+      expect(result.yamlParams).toEqual({ join: "|" });
+    });
+
+    it("stores > as a plain value when on the same line as the key", () => {
+      const result = parseDirectiveBody("join: >");
+      expect(result.yamlParams).toEqual({ join: ">" });
+    });
+
+    it("stores | as literal even when followed by blank lines (no indented content)", () => {
+      const result = parseDirectiveBody("join: |\n\n\nother: x");
+      expect(result.yamlParams).toEqual({ join: "|", other: "x" });
+    });
+
+    it("stores > as literal when followed by another key", () => {
+      const result = parseDirectiveBody("join: >\nother: value");
+      expect(result.yamlParams).toEqual({ join: ">", other: "value" });
+    });
+
+    it("still handles | block scalar when indented content follows", () => {
+      const result = parseDirectiveBody("prompt: |\n  line one\n  line two");
+      expect(result.yamlParams).toEqual({ prompt: "line one\nline two" });
+    });
+
+    it("still handles > block scalar when indented content follows", () => {
+      const result = parseDirectiveBody("prompt: >\n  line one\n  line two");
+      expect(result.yamlParams).toEqual({ prompt: "line one\nline two" });
+    });
+
+    it("| block scalar with @--- delimiter still works", () => {
+      const result = parseDirectiveBody("prompt: |\n  line one\n  line two\n@---\nSome text");
+      expect(result.yamlParams).toEqual({ prompt: "line one\nline two" });
+      expect(result.primaryContent).toBe("Some text");
+    });
+  });
+
+  describe("edge cases", () => {
+    it("handles whitespace-only quoted value", () => {
+      const result = parseDirectiveBody('join: "   "');
+      expect(result.yamlParams).toEqual({ join: "   " });
+    });
+
+    it("handles value containing unescaped quotes in the middle (not at boundaries)", () => {
+      const result = parseDirectiveBody('text: hello "world"');
+      expect(result.yamlParams).toEqual({ text: 'hello "world"' });
+    });
+
+    it("handles multiple escaped sequences in one value", () => {
+      const result = parseDirectiveBody('join: "a\\nb\\tc"');
+      expect(result.yamlParams).toEqual({ join: "a\nb\tc" });
+    });
+
+    it("handles quote-only value", () => {
+      const result = parseDirectiveBody('join: "\\""');
+      expect(result.yamlParams).toEqual({ join: '"' });
+    });
+  });
 });
