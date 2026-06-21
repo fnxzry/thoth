@@ -61,7 +61,7 @@ d("OpenAIProvider (real network)", () => {
       const templatePath = join(tmpDir, "template.md");
       writeFileSync(
         templatePath,
-        "@llm greeter\nprompt: |\n  Say hello in exactly one word.\n@end\n",
+        "@llm:greeter\nprompt: |\n  Say hello in exactly one word.\n@end\n",
         "utf8",
       );
       const provider = new OpenAIProvider({
@@ -100,7 +100,7 @@ describe("LlmProvider interface (live, gated)", () => {
       const templatePath = join(tmpDir, "t.md");
       writeFileSync(
         templatePath,
-        "@llm greet\nprompt: |\n  Reply with the word 'ok'.\n@end\n",
+        "@llm:greet\nprompt: |\n  Reply with the word 'ok'.\n@end\n",
         "utf8",
       );
       const provider = new OpenAIProvider({

@@ -43,71 +43,113 @@ describe("parse: static text only", () => {
   });
 });
 
-describe("parse: single-line directives", () => {
-  it("recognizes a single-line directive with an id", () => {
+describe("parse: directive header grammar (one-liners)", () => {
+  it("parses @<directive> <primary-parameter> as a one-liner", () => {
     const blocks = parse("@include foo.md");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "include",
-        id: "foo.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "foo.md",
         body: "",
         sourceLine: 1,
       },
     ]);
   });
 
-  it("recognizes a single-line directive with no id", () => {
-    const blocks = parse("@static");
-    expect(blocks).toEqual([
-      {
-        kind: "directive",
-        name: "static",
-        id: "",
-        attributes: {},
-        body: "",
-        sourceLine: 1,
-      },
-    ]);
-  });
-
-  it("captures key=value attributes on the header line", () => {
-    const blocks = parse("@llm summary model=gpt-4o");
+  it("captures multi-token primary parameters verbatim", () => {
+    const blocks = parse("@llm summarize this document");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "llm",
-        id: "summary",
-        attributes: { model: "gpt-4o" },
+        label: "",
+        primaryParameter: "summarize this document",
         body: "",
         sourceLine: 1,
       },
     ]);
   });
 
-  it("supports quoted attribute values", () => {
-    const blocks = parse('@llm summary model="gpt-4o-mini"');
+  it("parses @<directive>:<label> <primary-parameter> as a labeled one-liner", () => {
+    const blocks = parse("@llm:greet say hello in one short word");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "llm",
-        id: "summary",
-        attributes: { model: "gpt-4o-mini" },
+        label: "greet",
+        primaryParameter: "say hello in one short word",
         body: "",
         sourceLine: 1,
       },
     ]);
   });
 
-  it("tolerates a trailing colon on the header line", () => {
+  it("trims leading and trailing whitespace from the primary parameter", () => {
+    const blocks = parse("@llm    hello world   ");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "",
+        primaryParameter: "hello world",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("preserves internal whitespace in the primary parameter", () => {
+    const blocks = parse("@llm hello   world");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "",
+        primaryParameter: "hello   world",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("preserves a trailing colon on the primary parameter verbatim", () => {
     const blocks = parse("@include foo.md:");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "include",
-        id: "foo.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "foo.md:",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("treats key=value tokens on the directive line as part of the primary parameter", () => {
+    const blocks = parse("@llm summary model=gpt-4o");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "",
+        primaryParameter: "summary model=gpt-4o",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("treats quoted attribute-like tokens as part of the primary parameter", () => {
+    const blocks = parse('@llm summary model="gpt-4o-mini"');
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "",
+        primaryParameter: 'summary model="gpt-4o-mini"',
         body: "",
         sourceLine: 1,
       },
@@ -115,15 +157,43 @@ describe("parse: single-line directives", () => {
   });
 });
 
-describe("parse: multi-line directives", () => {
-  it("captures a body when the next non-blank line looks like an attribute", () => {
-    const blocks = parse("@llm summary\nprompt: hello\n@end");
+describe("parse: directive header grammar (multi-line)", () => {
+  it("parses @<directive> (no parameter) as a bare multi-line directive", () => {
+    const blocks = parse("@llm");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "llm",
-        id: "summary",
-        attributes: {},
+        label: "",
+        primaryParameter: "",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("parses @<directive>:<label> (no parameter) as a labeled multi-line directive", () => {
+    const blocks = parse("@llm:summary");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "summary",
+        primaryParameter: "",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("captures a body when the next non-blank line looks like an attribute", () => {
+    const blocks = parse("@llm:summary\nprompt: hello\n@end");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "summary",
+        primaryParameter: "",
         body: "prompt: hello",
         sourceLine: 1,
       },
@@ -132,14 +202,14 @@ describe("parse: multi-line directives", () => {
 
   it("captures multi-line body content", () => {
     const blocks = parse(
-      "@llm summary\nprompt: |\n  line one\n  line two\n@end",
+      "@llm:summary\nprompt: |\n  line one\n  line two\n@end",
     );
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "llm",
-        id: "summary",
-        attributes: {},
+        label: "summary",
+        primaryParameter: "",
         body: "prompt: |\n  line one\n  line two",
         sourceLine: 1,
       },
@@ -147,13 +217,13 @@ describe("parse: multi-line directives", () => {
   });
 
   it("captures empty body when @end immediately follows the header", () => {
-    const blocks = parse("@llm summary\n@end");
+    const blocks = parse("@llm:summary\n@end");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "llm",
-        id: "summary",
-        attributes: {},
+        label: "summary",
+        primaryParameter: "",
         body: "",
         sourceLine: 1,
       },
@@ -161,13 +231,13 @@ describe("parse: multi-line directives", () => {
   });
 
   it("captures body content that is not a body element when @end is found", () => {
-    const blocks = parse("@static id\nverbatim body\n@end");
+    const blocks = parse("@static:id\nverbatim body\n@end");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "static",
-        id: "id",
-        attributes: {},
+        label: "id",
+        primaryParameter: "",
         body: "verbatim body",
         sourceLine: 1,
       },
@@ -175,50 +245,70 @@ describe("parse: multi-line directives", () => {
   });
 
   it("captures body with multiple non-body-element lines when @end is found", () => {
-    const blocks = parse("@static id\nline one\nline two\n@end");
+    const blocks = parse("@static:id\nline one\nline two\n@end");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "static",
-        id: "id",
-        attributes: {},
+        label: "id",
+        primaryParameter: "",
         body: "line one\nline two",
         sourceLine: 1,
       },
     ]);
   });
 
-  it("treats a directive as single-line when another directive appears before any @end", () => {
-    const blocks = parse("@include a.md\n@include b.md");
-    expect(blocks).toEqual([
-      {
-        kind: "directive",
-        name: "include",
-        id: "a.md",
-        attributes: {},
-        body: "",
-        sourceLine: 1,
-      },
-      {
-        kind: "directive",
-        name: "include",
-        id: "b.md",
-        attributes: {},
-        body: "",
-        sourceLine: 2,
-      },
-    ]);
-  });
-
   it("supports trailing whitespace and comments on @end", () => {
-    const blocks = parse("@llm summary\nprompt: hi\n@end   # closing");
+    const blocks = parse("@llm:summary\nprompt: hi\n@end   # closing");
     expect(blocks).toEqual([
       {
         kind: "directive",
         name: "llm",
-        id: "summary",
-        attributes: {},
+        label: "summary",
+        primaryParameter: "",
         body: "prompt: hi",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("captures body on a bare multi-line directive without a label", () => {
+    const blocks = parse("@llm\nprompt: hi\n@end");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "",
+        primaryParameter: "",
+        body: "prompt: hi",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("captures one-liner body content after a labeled one-liner directive", () => {
+    const blocks = parse("@llm:foo bar\n@end");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "llm",
+        label: "foo",
+        primaryParameter: "bar",
+        body: "",
+        sourceLine: 1,
+      },
+    ]);
+  });
+
+  it("captures body content after a one-liner directive without a label", () => {
+    const blocks = parse("@static id\nverbatim body\n@end");
+    expect(blocks).toEqual([
+      {
+        kind: "directive",
+        name: "static",
+        label: "",
+        primaryParameter: "id",
+        body: "verbatim body",
         sourceLine: 1,
       },
     ]);
@@ -233,8 +323,8 @@ describe("parse: combined blocks", () => {
       {
         kind: "directive",
         name: "include",
-        id: "foo.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "foo.md",
         body: "",
         sourceLine: 2,
       },
@@ -251,8 +341,8 @@ describe("parse: combined blocks", () => {
       {
         kind: "directive",
         name: "include",
-        id: "a.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "a.md",
         body: "",
         sourceLine: 2,
       },
@@ -260,8 +350,8 @@ describe("parse: combined blocks", () => {
       {
         kind: "directive",
         name: "include",
-        id: "b.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "b.md",
         body: "",
         sourceLine: 4,
       },
@@ -276,8 +366,8 @@ describe("parse: combined blocks", () => {
       {
         kind: "directive",
         name: "include",
-        id: "foo.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "foo.md",
         body: "",
         sourceLine: 2,
       },
@@ -291,16 +381,16 @@ describe("parse: combined blocks", () => {
       {
         kind: "directive",
         name: "include",
-        id: "a.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "a.md",
         body: "",
         sourceLine: 1,
       },
       {
         kind: "directive",
         name: "include",
-        id: "b.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "b.md",
         body: "",
         sourceLine: 2,
       },
@@ -309,7 +399,7 @@ describe("parse: combined blocks", () => {
 
   it("reports the correct source line for nested-looking static text inside a body", () => {
     const blocks = parse(
-      "@llm summary\nprompt: |\n  This body has @include foo.md inside.\n@end",
+      "@llm:summary\nprompt: |\n  This body has @include foo.md inside.\n@end",
     );
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({
@@ -323,9 +413,21 @@ describe("parse: combined blocks", () => {
 
 describe("parse: errors", () => {
   it("reports the source line for a missing @end", () => {
-    expect(() => parse("@llm summary\nprompt: hello\n")).toThrowError(ParseError);
+    expect(() => parse("@llm:summary\nprompt: hello\n")).toThrowError(ParseError);
     try {
-      parse("@llm summary\nprompt: hello\n");
+      parse("@llm:summary\nprompt: hello\n");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ParseError);
+      expect((err as ParseError).line).toBe(1);
+      expect((err as ParseError).message).toContain("@llm");
+      expect((err as ParseError).message).toContain("@end");
+    }
+  });
+
+  it("errors on a one-liner @llm prompt line without a closing @end", () => {
+    expect(() => parse("@llm hello\nprompt: world\n")).toThrowError(ParseError);
+    try {
+      parse("@llm hello\nprompt: world\n");
     } catch (err) {
       expect(err).toBeInstanceOf(ParseError);
       expect((err as ParseError).line).toBe(1);
@@ -340,8 +442,8 @@ describe("parse: errors", () => {
       {
         kind: "directive",
         name: "include",
-        id: "foo.md",
-        attributes: {},
+        label: "",
+        primaryParameter: "foo.md",
         body: "",
         sourceLine: 1,
       },
@@ -381,7 +483,7 @@ describe("parse: sourceLine correctness", () => {
 
   it("reports the correct sourceLine for multi-line directive bodies", () => {
     const blocks = parse(
-      "@llm summary\nprompt: |\n  multi\n  line\n@end",
+      "@llm:summary\nprompt: |\n  multi\n  line\n@end",
     );
     expect(blocks[0]).toMatchObject({
       kind: "directive",

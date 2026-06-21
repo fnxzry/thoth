@@ -11,24 +11,41 @@ export class ParseError extends Error {
 }
 
 const NAME_PATTERN = "[a-zA-Z_][a-zA-Z0-9_-]*";
-const HEADER_REGEX = new RegExp(`^@(${NAME_PATTERN})(?:[ \\t]+([^\\s]+))?(.*)?$`);
 const END_REGEX = /^@end[ \t]*(?:#.*)?$/;
 const DIRECTIVE_HEADER_REGEX = new RegExp(`^@(${NAME_PATTERN})(?:[ \\t]|$)`);
 const BODY_ELEMENT_REGEX = new RegExp(`^\\s*(${NAME_PATTERN})[ \\t]*[:=]\\s*`);
-const ATTR_REGEX = new RegExp(`(${NAME_PATTERN})=("(?:[^"\\\\]|\\\\.)*"|\\S+)`, "g");
 
-function parseAttributes(rest: string): Record<string, unknown> {
-  const attrs: Record<string, unknown> = {};
-  ATTR_REGEX.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = ATTR_REGEX.exec(rest)) !== null) {
-    let value: string = m[2];
-    if (value.startsWith('"') && value.endsWith('"')) {
-      value = value.slice(1, -1).replace(/\\(.)/g, "$1");
-    }
-    attrs[m[1]] = value;
+interface DirectiveHeader {
+  name: string;
+  label: string;
+  primaryParameter: string;
+}
+
+// Parses a directive header line into its three fields. The four accepted
+// forms (per docs/architecture.md §4) match in order from most to least
+// specific: label + primary, label only, primary only, bare name.
+function parseDirectiveHeader(line: string): DirectiveHeader | null {
+  let m = line.match(new RegExp(`^@(${NAME_PATTERN}):(${NAME_PATTERN})[ \\t]+(.*)$`));
+  if (m) {
+    return { name: m[1], label: m[2], primaryParameter: m[3].trim() };
   }
-  return attrs;
+
+  m = line.match(new RegExp(`^@(${NAME_PATTERN}):(${NAME_PATTERN})[ \\t]*$`));
+  if (m) {
+    return { name: m[1], label: m[2], primaryParameter: "" };
+  }
+
+  m = line.match(new RegExp(`^@(${NAME_PATTERN})[ \\t]+(.*)$`));
+  if (m) {
+    return { name: m[1], label: "", primaryParameter: m[2].trim() };
+  }
+
+  m = line.match(new RegExp(`^@(${NAME_PATTERN})[ \\t]*$`));
+  if (m) {
+    return { name: m[1], label: "", primaryParameter: "" };
+  }
+
+  return null;
 }
 
 function isEnd(line: string): boolean {
@@ -63,13 +80,10 @@ export function parse(template: string): Block[] {
 
   while (i < lines.length) {
     const line = lines[i];
-    const headerMatch = line.match(HEADER_REGEX);
+    const header = parseDirectiveHeader(line);
 
-    if (headerMatch && headerMatch[1] !== "end") {
-      const name = headerMatch[1];
-      const id = (headerMatch[2] ?? "").replace(/[:=]$/, "");
-      const rest = (headerMatch[3] ?? "").trim();
-      const attributes = parseAttributes(rest);
+    if (header && header.name !== "end") {
+      const { name, label, primaryParameter } = header;
       const headerLine = i + 1;
 
       let scanEnd = -1;
@@ -96,8 +110,8 @@ export function parse(template: string): Block[] {
         blocks.push({
           kind: "directive",
           name,
-          id,
-          attributes,
+          label,
+          primaryParameter,
           body: bodyLines.join("\n"),
           sourceLine: headerLine,
         });
@@ -120,8 +134,8 @@ export function parse(template: string): Block[] {
         blocks.push({
           kind: "directive",
           name,
-          id,
-          attributes,
+          label,
+          primaryParameter,
           body: "",
           sourceLine: headerLine,
         });

@@ -12,8 +12,8 @@ export class LlmError extends Error {
   }
 }
 
-interface LlmBlockSpec {
-  prompt: string;
+interface LlmBodySpec {
+  prompt?: string;
   model?: string;
   contextPaths: string[];
 }
@@ -21,7 +21,7 @@ interface LlmBlockSpec {
 const ATTR_KEY_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 const CONTEXT_ITEM_PATTERN = /^\s*-\s+(.+?)\s*$/;
 
-function parseBlockBody(body: string, sourceLine: number): LlmBlockSpec {
+function parseBlockBody(body: string, sourceLine: number): LlmBodySpec {
   const lines = body.split("\n");
   const attrs: Record<string, string> = {};
   const contextPaths: string[] = [];
@@ -97,15 +97,6 @@ function parseBlockBody(body: string, sourceLine: number): LlmBlockSpec {
     i++;
   }
 
-  const prompt = attrs.prompt;
-  if (prompt === undefined || prompt === "") {
-    throw new LlmError(
-      `@llm at line ${sourceLine}: missing required attribute "prompt"`,
-      { line: sourceLine },
-    );
-  }
-  const model = attrs.model;
-
   for (const key of Object.keys(attrs)) {
     if (!ATTR_KEY_PATTERN.test(key)) {
       throw new LlmError(
@@ -114,6 +105,8 @@ function parseBlockBody(body: string, sourceLine: number): LlmBlockSpec {
       );
     }
   }
+
+  const model = attrs.model;
   if (model !== undefined && model === "") {
     throw new LlmError(
       `@llm at line ${sourceLine}: empty "model" attribute`,
@@ -121,16 +114,30 @@ function parseBlockBody(body: string, sourceLine: number): LlmBlockSpec {
     );
   }
 
-  return { prompt, model, contextPaths };
+  return {
+    prompt: attrs.prompt,
+    model,
+    contextPaths,
+  };
 }
 
 const llmDirective: DirectiveImpl = async (ctx) => {
   const block = ctx.block as DirectiveBlock;
-  const spec = parseBlockBody(block.body, block.sourceLine);
+  const bodySpec = parseBlockBody(block.body, block.sourceLine);
+
+  // Primary parameter (one-liner form) takes precedence over the body's
+  // `prompt:` attribute. If neither yields a prompt, error.
+  const prompt = block.primaryParameter || bodySpec.prompt;
+  if (!prompt) {
+    throw new LlmError(
+      `@llm at line ${block.sourceLine}: missing required attribute "prompt"`,
+      { line: block.sourceLine },
+    );
+  }
 
   let contextFiles: Map<string, string>;
   try {
-    contextFiles = await ctx.resolveContext(spec.contextPaths);
+    contextFiles = await ctx.resolveContext(bodySpec.contextPaths);
   } catch (err) {
     if (err instanceof EngineError) throw err;
     throw new LlmError(
@@ -139,19 +146,19 @@ const llmDirective: DirectiveImpl = async (ctx) => {
     );
   }
 
-  let userPrompt = spec.prompt;
+  let userPrompt = prompt;
   if (contextFiles.size > 0) {
     const sections: string[] = [];
     for (const [path, contents] of contextFiles) {
       sections.push(`----- ${path} -----\n${contents}`);
     }
-    userPrompt = `${spec.prompt}\n\n${sections.join("\n\n")}`;
+    userPrompt = `${prompt}\n\n${sections.join("\n\n")}`;
   }
 
   const request = {
     system: "You are a helpful assistant that produces concise, accurate output for documentation generation.",
     user: userPrompt,
-    model: spec.model ?? ctx.config.llm.defaultModel,
+    model: bodySpec.model ?? ctx.config.llm.defaultModel,
   };
 
   let response;

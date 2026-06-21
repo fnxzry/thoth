@@ -15,36 +15,36 @@ export class IncludeError extends Error {
 
 const includeDirective: DirectiveImpl = async (ctx) => {
   const block = ctx.block as DirectiveBlock;
-  const id = block.id;
-  if (!id) {
+  const path = block.primaryParameter;
+  if (!path) {
     throw new IncludeError(
       `@include at line ${block.sourceLine} has no path`,
       block.sourceLine,
     );
   }
 
-  const path = isAbsolute(id) ? id : resolve(ctx.templateDir, id);
+  const resolvedPath = isAbsolute(path) ? path : resolve(ctx.templateDir, path);
 
   let text: string;
   try {
-    text = await readFile(path, { encoding: "utf8" });
+    text = await readFile(resolvedPath, { encoding: "utf8" });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT") {
       throw new IncludeError(
-        `@include: file not found: ${path}`,
+        `@include: file not found: ${resolvedPath}`,
         block.sourceLine,
       );
     }
     if (code === "EACCES") {
       throw new IncludeError(
-        `@include: permission denied: ${path}`,
+        `@include: permission denied: ${resolvedPath}`,
         block.sourceLine,
       );
     }
     const detail = err instanceof Error ? err.message : String(err);
     throw new IncludeError(
-      `@include: failed to read ${path}: ${detail}`,
+      `@include: failed to read ${resolvedPath}: ${detail}`,
       block.sourceLine,
     );
   }

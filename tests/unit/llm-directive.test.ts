@@ -7,6 +7,7 @@ import "../../src/directives/llm.js";
 import "../../src/directives/include.js";
 import "../../src/directives/static.js";
 import { get, has, clear } from "../../src/directives/index.js";
+import { computeLlmCacheKey } from "../../src/cache.js";
 import { ResolvedConfig } from "../../src/types.js";
 
 const fakeConfig: ResolvedConfig = {
@@ -64,7 +65,7 @@ describe("@llm directive (module side effects)", () => {
   });
 });
 
-describe("@llm directive (behavior)", () => {
+describe("@llm directive (multi-line body behavior)", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -77,10 +78,10 @@ describe("@llm directive (behavior)", () => {
     }
   });
 
-  function makeCtx(opts: {
+  function makeBodyCtx(opts: {
     body: string;
     sourceLine?: number;
-    id?: string;
+    label?: string;
     provider?: StubProvider;
     files?: Record<string, string>;
   }) {
@@ -95,8 +96,8 @@ describe("@llm directive (behavior)", () => {
         block: {
           kind: "directive" as const,
           name: "llm",
-          id: opts.id ?? "summary",
-          attributes: {},
+          label: opts.label ?? "summary",
+          primaryParameter: "",
           body: opts.body,
           sourceLine: opts.sourceLine ?? 1,
         },
@@ -123,7 +124,7 @@ describe("@llm directive (behavior)", () => {
     const provider = makeStubProvider();
     provider.setResponse({ content: "the model output" });
 
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: Summarize.",
     });
@@ -140,7 +141,7 @@ describe("@llm directive (behavior)", () => {
 
   it("uses the configured defaultModel when the directive does not specify one", async () => {
     const provider = makeStubProvider();
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: hi",
     });
@@ -153,7 +154,7 @@ describe("@llm directive (behavior)", () => {
 
   it("overrides the configured defaultModel with the directive's model attribute", async () => {
     const provider = makeStubProvider();
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: hi\nmodel: gpt-override",
     });
@@ -166,7 +167,7 @@ describe("@llm directive (behavior)", () => {
 
   it("inlines context-file contents after the prompt", async () => {
     const provider = makeStubProvider();
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: Summarize.\ncontext:\n  - doc.md\n  - other.md",
       files: {
@@ -187,7 +188,7 @@ describe("@llm directive (behavior)", () => {
 
   it("does not include any context-file section when no context paths are listed", async () => {
     const provider = makeStubProvider();
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: standalone",
     });
@@ -200,7 +201,7 @@ describe("@llm directive (behavior)", () => {
   });
 
   it("passes the directive's source line through LlmError on missing prompt", async () => {
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       body: "context:\n  - doc.md\n",
     });
     const impl = get("llm");
@@ -218,7 +219,7 @@ describe("@llm directive (behavior)", () => {
   it("surfaces provider errors as LlmError with the directive's source line", async () => {
     const provider = makeStubProvider();
     provider.setError(new Error("model blew up"));
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: do something",
     });
@@ -236,7 +237,7 @@ describe("@llm directive (behavior)", () => {
 
   it("supports multi-line prompt bodies via the | block style", async () => {
     const provider = makeStubProvider();
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: |\n  line one\n  line two\n",
     });
@@ -256,8 +257,8 @@ describe("@llm directive (behavior)", () => {
       block: {
         kind: "directive" as const,
         name: "llm",
-        id: "x",
-        attributes: {},
+        label: "x",
+        primaryParameter: "",
         body: "prompt: hi\ncontext:\n  - ctx-file.md",
         sourceLine: 1,
       },
@@ -284,7 +285,7 @@ describe("@llm directive (behavior)", () => {
 
   it("tolerates blank lines between body elements", async () => {
     const provider = makeStubProvider();
-    const { ctx } = makeCtx({
+    const { ctx } = makeBodyCtx({
       provider,
       body: "prompt: |\n  first line\n  second line\n\nmodel: gpt-x\n",
     });
@@ -297,6 +298,258 @@ describe("@llm directive (behavior)", () => {
   });
 });
 
+describe("@llm directive (one-liner primary parameter)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "thoth-llm-oneliner-"));
+  });
+
+  afterEach(() => {
+    if (existsSync(tmpDir)) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  function makeOneLinerCtx(opts: {
+    primaryParameter: string;
+    label?: string;
+    body?: string;
+    sourceLine?: number;
+    provider?: StubProvider;
+    files?: Record<string, string>;
+  }) {
+    const provider = opts.provider ?? makeStubProvider();
+    const contextMap = new Map<string, string>();
+    for (const [p, c] of Object.entries(opts.files ?? {})) {
+      contextMap.set(p, c);
+    }
+    return {
+      provider,
+      ctx: {
+        block: {
+          kind: "directive" as const,
+          name: "llm",
+          label: opts.label ?? "",
+          primaryParameter: opts.primaryParameter,
+          body: opts.body ?? "",
+          sourceLine: opts.sourceLine ?? 1,
+        },
+        resolveContext: async (paths: string[]) => {
+          const out = new Map<string, string>();
+          for (const p of paths) {
+            const v = contextMap.get(p);
+            if (v === undefined) {
+              throw new Error(`test setup: no content for ${p}`);
+            }
+            out.set(p, v);
+          }
+          return out;
+        },
+        callLlm: async (req: { system: string; user: string; model: string }) =>
+          provider.complete(req),
+        config: fakeConfig,
+        templateDir: tmpDir,
+      },
+    };
+  }
+
+  it("uses the primary parameter as the prompt", async () => {
+    const provider = makeStubProvider();
+    provider.setResponse({ content: "OK" });
+
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "summarize this document",
+    });
+
+    const impl = get("llm");
+    const result = await impl(ctx);
+
+    expect(result.text).toBe("OK");
+    expect(provider.captured[0].user).toBe("summarize this document");
+  });
+
+  it("uses the primary parameter with the configured defaultModel", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "hello",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].model).toBe(fakeConfig.llm.defaultModel);
+  });
+
+  it("uses the labeled one-liner form with label and primary parameter", async () => {
+    const provider = makeStubProvider();
+    provider.setResponse({ content: "greeting" });
+
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      label: "greet",
+      primaryParameter: "say hello in one short word",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("say hello in one short word");
+  });
+
+  it("prefers the primary parameter over the body's prompt attribute", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "from-primary",
+      body: "prompt: from-body",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("from-primary");
+  });
+
+  it("still respects the body's model attribute on a one-liner", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "hi",
+      body: "model: gpt-override",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("hi");
+    expect(provider.captured[0].model).toBe("gpt-override");
+  });
+
+  it("still respects the body's context paths on a one-liner", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "summarize",
+      body: "context:\n  - doc.md",
+      files: {
+        "doc.md": "DOC CONTENT",
+      },
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toContain("summarize");
+    expect(provider.captured[0].user).toContain("----- doc.md -----");
+    expect(provider.captured[0].user).toContain("DOC CONTENT");
+  });
+
+  it("renders the prompt 'hello' verbatim from @llm hello", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "hello",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("hello");
+  });
+
+  it("renders the prompt 'hello world' verbatim from @llm hello world", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "hello world",
+    });
+
+    const impl = get("llm");
+    await impl(ctx);
+
+    expect(provider.captured[0].user).toBe("hello world");
+  });
+
+  it("exits 1 with a clear error when the primary parameter is empty", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "",
+      body: "",
+      sourceLine: 7,
+    });
+
+    const impl = get("llm");
+    let caught: unknown;
+    try {
+      await impl(ctx);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).message).toContain("@llm");
+    expect((caught as Error).message).toContain("prompt");
+    expect((caught as { line?: number }).line).toBe(7);
+  });
+
+  it("exits 1 when the primary parameter is empty but the body has no prompt", async () => {
+    const provider = makeStubProvider();
+    const { ctx } = makeOneLinerCtx({
+      provider,
+      primaryParameter: "",
+      body: "context:\n  - doc.md",
+      files: { "doc.md": "X" },
+      sourceLine: 3,
+    });
+
+    const impl = get("llm");
+    let caught: unknown;
+    try {
+      await impl(ctx);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).message).toContain("prompt");
+    expect((caught as { line?: number }).line).toBe(3);
+  });
+});
+
+describe("@llm directive (label exposure)", () => {
+  it("does not affect the LLM call; the prompt and model alone drive it", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "thoth-llm-label-"));
+    try {
+      const provider = makeStubProvider();
+      const ctx = {
+        provider,
+        block: {
+          kind: "directive" as const,
+          name: "llm",
+          label: "irrelevant-label",
+          primaryParameter: "just-the-prompt",
+          body: "",
+          sourceLine: 1,
+        },
+        resolveContext: async () => new Map<string, string>(),
+        callLlm: async (req: { system: string; user: string; model: string }) =>
+          provider.complete(req),
+        config: fakeConfig,
+        templateDir: tmpDir,
+      };
+
+      const impl = get("llm");
+      await impl(ctx);
+
+      expect(provider.captured[0].user).toBe("just-the-prompt");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("@llm directive: registry cleanup safety", () => {
   afterEach(() => {
     clear();
@@ -306,5 +559,108 @@ describe("@llm directive: registry cleanup safety", () => {
     expect(has("llm")).toBe(true);
     clear();
     expect(has("llm")).toBe(false);
+  });
+});
+
+describe("computeLlmCacheKey (cache-key spec)", () => {
+  it("produces the same key for one-liner and equivalent multi-line form", () => {
+    const providerId = "openai";
+    const model = "gpt-4o";
+    const prompt = "summarize";
+    const contextFiles = new Map<string, string>([
+      ["doc.md", "DOC CONTENT"],
+    ]);
+
+    const oneLinerKey = computeLlmCacheKey({
+      providerId,
+      model,
+      prompt,
+      contextFiles,
+    });
+    const multiLineKey = computeLlmCacheKey({
+      providerId,
+      model,
+      prompt,
+      contextFiles,
+    });
+
+    expect(oneLinerKey).toBe(multiLineKey);
+  });
+
+  it("produces different keys for different prompts", () => {
+    const common = {
+      providerId: "openai",
+      model: "gpt-4o",
+      contextFiles: new Map<string, string>(),
+    };
+    expect(
+      computeLlmCacheKey({ ...common, prompt: "first" }),
+    ).not.toBe(computeLlmCacheKey({ ...common, prompt: "second" }));
+  });
+
+  it("produces different keys for different models", () => {
+    const common = {
+      providerId: "openai",
+      prompt: "same",
+      contextFiles: new Map<string, string>(),
+    };
+    expect(
+      computeLlmCacheKey({ ...common, model: "gpt-4o" }),
+    ).not.toBe(computeLlmCacheKey({ ...common, model: "gpt-4o-mini" }));
+  });
+
+  it("produces different keys when context file contents change", () => {
+    const baseContext = new Map<string, string>([["a.md", "AAA"]]);
+    const changedContext = new Map<string, string>([["a.md", "BBB"]]);
+    const common = { providerId: "openai", model: "gpt-4o", prompt: "p" };
+    expect(
+      computeLlmCacheKey({ ...common, contextFiles: baseContext }),
+    ).not.toBe(computeLlmCacheKey({ ...common, contextFiles: changedContext }));
+  });
+
+  it("produces the same key regardless of context-file order", () => {
+    const a = new Map<string, string>([
+      ["a.md", "AAA"],
+      ["b.md", "BBB"],
+    ]);
+    const b = new Map<string, string>([
+      ["b.md", "BBB"],
+      ["a.md", "AAA"],
+    ]);
+    const common = { providerId: "openai", model: "gpt-4o", prompt: "p" };
+    expect(
+      computeLlmCacheKey({ ...common, contextFiles: a }),
+    ).toBe(computeLlmCacheKey({ ...common, contextFiles: b }));
+  });
+
+  it("canonicalizes trailing whitespace on the prompt", () => {
+    const common = {
+      providerId: "openai",
+      model: "gpt-4o",
+      contextFiles: new Map<string, string>(),
+    };
+    expect(
+      computeLlmCacheKey({ ...common, prompt: "hi" }),
+    ).toBe(computeLlmCacheKey({ ...common, prompt: "hi   \n  \n" }));
+  });
+
+  it("produces a 64-character lowercase hex string", () => {
+    const key = computeLlmCacheKey({
+      providerId: "openai",
+      model: "gpt-4o",
+      prompt: "anything",
+      contextFiles: new Map<string, string>(),
+    });
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("produces the same key for the same inputs (determinism)", () => {
+    const input = {
+      providerId: "openai",
+      model: "gpt-4o",
+      prompt: "determinism check",
+      contextFiles: new Map<string, string>([["x.md", "X"]]),
+    };
+    expect(computeLlmCacheKey(input)).toBe(computeLlmCacheKey(input));
   });
 });

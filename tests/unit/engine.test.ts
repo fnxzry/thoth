@@ -151,6 +151,23 @@ describe("engine: include directive", () => {
     });
     expect(result).toBe(template);
   });
+
+  it("exits 1 with a clear error when @include has no primary parameter", async () => {
+    const template = "before\n@include\nafter";
+    let caught: unknown;
+    try {
+      await render(template, {
+        templateDir: tmpDir,
+        config: defaultConfig,
+        llmProvider: stubLlmProvider,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).message).toContain("@include");
+    expect((caught as { line?: number }).line).toBe(2);
+  });
 });
 
 describe("engine: static directive", () => {
@@ -172,6 +189,156 @@ describe("engine: static directive", () => {
       llmProvider: stubLlmProvider,
     });
     expect(result).toBe("before\n\nafter");
+  });
+
+  it("renders @static:<label> as the body unchanged", async () => {
+    const template = "before\n@static:mylabel\nverbatim body\n@end\nafter";
+    const result = await render(template, {
+      templateDir: "/tmp",
+      config: defaultConfig,
+      llmProvider: stubLlmProvider,
+    });
+    expect(result).toBe("before\nverbatim body\nafter");
+  });
+});
+
+describe("engine: llm directive end-to-end", () => {
+  let renderFresh: typeof import("../../src/engine.js").render;
+  let defaultConfigFresh: typeof import("../../src/engine.js").defaultConfig;
+
+  beforeEach(async () => {
+    clear();
+    vi.resetModules();
+    const engine = await import("../../src/engine.js");
+    renderFresh = engine.render;
+    defaultConfigFresh = engine.defaultConfig;
+  });
+
+  it("forwards LlmProvider.complete through the engine's callLlm", async () => {
+    let captured: { system: string; user: string; model: string } | undefined;
+
+    const capturingProvider: LlmProvider = {
+      complete: async (req) => {
+        captured = { ...req };
+        return { content: "LLM_RESULT" };
+      },
+    };
+
+    const template = "before\n@llm:id\nprompt: hi\n@end\nafter";
+    const result = await renderFresh(template, {
+      templateDir: "/tmp",
+      config: defaultConfigFresh,
+      llmProvider: capturingProvider,
+    });
+
+    expect(result).toBe("before\nLLM_RESULT\nafter");
+    expect(captured).toBeDefined();
+    expect(captured!.user).toBe("hi");
+    expect(captured!.model).toBe(defaultConfigFresh.llm.defaultModel);
+  });
+
+  it("passes the configured model through when the directive does not specify one", async () => {
+    let capturedModel: string | undefined;
+    const provider: LlmProvider = {
+      complete: async (req) => {
+        capturedModel = req.model;
+        return { content: "ok" };
+      },
+    };
+
+    const cfg = {
+      ...defaultConfigFresh,
+      llm: { ...defaultConfigFresh.llm, defaultModel: "configured-model" },
+    };
+    await renderFresh("@llm:id\nprompt: hi\n@end", {
+      templateDir: "/tmp",
+      config: cfg,
+      llmProvider: provider,
+    });
+    expect(capturedModel).toBe("configured-model");
+  });
+
+  it("renders a one-liner @llm directive through the engine", async () => {
+    let captured: { user: string } | undefined;
+    const provider: LlmProvider = {
+      complete: async (req) => {
+        captured = { user: req.user };
+        return { content: "ONE_LINER_RESULT" };
+      },
+    };
+
+    const template = "before\n@llm summarize this document\nafter";
+    const result = await renderFresh(template, {
+      templateDir: "/tmp",
+      config: defaultConfigFresh,
+      llmProvider: provider,
+    });
+
+    expect(result).toBe("before\nONE_LINER_RESULT\nafter");
+    expect(captured!.user).toBe("summarize this document");
+  });
+
+  it("renders a labeled one-liner @llm directive through the engine", async () => {
+    let captured: { user: string } | undefined;
+    const provider: LlmProvider = {
+      complete: async (req) => {
+        captured = { user: req.user };
+        return { content: "GREET" };
+      },
+    };
+
+    const template = "before\n@llm:greet say hello in one short word\nafter";
+    const result = await renderFresh(template, {
+      templateDir: "/tmp",
+      config: defaultConfigFresh,
+      llmProvider: provider,
+    });
+
+    expect(result).toBe("before\nGREET\nafter");
+    expect(captured!.user).toBe("say hello in one short word");
+  });
+
+  it("exits 1 with a clear error on a bare @llm directive", async () => {
+    const provider: LlmProvider = {
+      complete: async () => ({ content: "should-not-be-called" }),
+    };
+
+    const template = "before\n@llm\nafter";
+    let caught: unknown;
+    try {
+      await renderFresh(template, {
+        templateDir: "/tmp",
+        config: defaultConfigFresh,
+        llmProvider: provider,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).message).toContain("@llm");
+    expect((caught as Error).message).toContain("prompt");
+    expect((caught as { line?: number }).line).toBe(2);
+  });
+
+  it("renders @llm hello and @llm hello world with different prompts", async () => {
+    const seen: string[] = [];
+    const provider: LlmProvider = {
+      complete: async (req) => {
+        seen.push(req.user);
+        return { content: `(${req.user})` };
+      },
+    };
+
+    const template =
+      "@llm hello\n@llm hello world\ndone";
+    const result = await renderFresh(template, {
+      templateDir: "/tmp",
+      config: defaultConfigFresh,
+      llmProvider: provider,
+    });
+
+    expect(result).toBe("(hello)\n(hello world)\ndone");
+    expect(seen).toEqual(["hello", "hello world"]);
   });
 });
 
@@ -223,6 +390,23 @@ describe("engine: error handling", () => {
     expect((caught as EngineError).line).toBe(1);
   });
 
+  it("throws EngineError on a one-liner @llm followed by a body-element line without @end", async () => {
+    let caught: unknown;
+    try {
+      await render("@llm hello\nprompt: world\n", {
+        templateDir: "/tmp",
+        config: defaultConfig,
+        llmProvider: stubLlmProvider,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(EngineError);
+    expect((caught as EngineError).message).toContain("@llm");
+    expect((caught as EngineError).message).toContain("@end");
+    expect((caught as EngineError).line).toBe(1);
+  });
+
   it("throws EngineError on an unexpected @end", async () => {
     let caught: unknown;
     try {
@@ -242,12 +426,14 @@ describe("engine: error handling", () => {
 describe("engine: directive context wiring", () => {
   it("passes the directive block and template directory to directives", async () => {
     let capturedTemplateDir: string | undefined;
-    let capturedBlockId: string | undefined;
+    let capturedLabel: string | undefined;
+    let capturedPrimaryParameter: string | undefined;
 
     const customImpl: DirectiveImpl = async (ctx) => {
       capturedTemplateDir = ctx.templateDir;
       if (ctx.block.kind === "directive") {
-        capturedBlockId = ctx.block.id;
+        capturedLabel = ctx.block.label;
+        capturedPrimaryParameter = ctx.block.primaryParameter;
       }
       return { text: "OK" };
     };
@@ -255,14 +441,15 @@ describe("engine: directive context wiring", () => {
     clear();
     register("custom", customImpl);
     try {
-      const result = await render("@custom hello", {
+      const result = await render("@custom:hello world", {
         templateDir: "/work",
         config: defaultConfig,
         llmProvider: stubLlmProvider,
       });
       expect(result).toBe("OK");
       expect(capturedTemplateDir).toBe("/work");
-      expect(capturedBlockId).toBe("hello");
+      expect(capturedLabel).toBe("hello");
+      expect(capturedPrimaryParameter).toBe("world");
     } finally {
       clear();
     }
@@ -292,63 +479,6 @@ describe("engine: directive context wiring", () => {
 // Sanity check: DirectiveRegistryError is what the engine catches for unknown
 // directives; this test guards against a future refactor that changes the
 // error class used.
-describe("engine: llm directive wiring", () => {
-  let renderFresh: typeof import("../../src/engine.js").render;
-  let defaultConfigFresh: typeof import("../../src/engine.js").defaultConfig;
-
-  beforeEach(async () => {
-    clear();
-    vi.resetModules();
-    const engine = await import("../../src/engine.js");
-    renderFresh = engine.render;
-    defaultConfigFresh = engine.defaultConfig;
-  });
-
-  it("forwards LlmProvider.complete through the engine's callLlm", async () => {
-    let captured: { system: string; user: string; model: string } | undefined;
-
-    const capturingProvider: LlmProvider = {
-      complete: async (req) => {
-        captured = { ...req };
-        return { content: "LLM_RESULT" };
-      },
-    };
-
-    const template = "before\n@llm id\nprompt: hi\n@end\nafter";
-    const result = await renderFresh(template, {
-      templateDir: "/tmp",
-      config: defaultConfigFresh,
-      llmProvider: capturingProvider,
-    });
-
-    expect(result).toBe("before\nLLM_RESULT\nafter");
-    expect(captured).toBeDefined();
-    expect(captured!.user).toBe("hi");
-    expect(captured!.model).toBe(defaultConfigFresh.llm.defaultModel);
-  });
-
-  it("passes the configured model through when the directive does not specify one", async () => {
-    let capturedModel: string | undefined;
-    const provider: LlmProvider = {
-      complete: async (req) => {
-        capturedModel = req.model;
-        return { content: "ok" };
-      },
-    };
-
-    const cfg = {
-      ...defaultConfigFresh,
-      llm: { ...defaultConfigFresh.llm, defaultModel: "configured-model" },
-    };
-    await renderFresh("@llm id\nprompt: hi\n@end", {
-      templateDir: "/tmp",
-      config: cfg,
-      llmProvider: provider,
-    });
-    expect(capturedModel).toBe("configured-model");
-  });
-});
-
 describe("engine: directive registry error contract", () => {
   it("DirectiveRegistryError is what get() throws for unknown names", () => {
     clear();

@@ -9,8 +9,8 @@ export const StaticBlockSchema = z.object({
 export const DirectiveBlockSchema = z.object({
   kind: z.literal("directive"),
   name: z.string(),
-  id: z.string(),
-  attributes: z.record(z.string(), z.unknown()),
+  label: z.string(),
+  primaryParameter: z.string(),
   body: z.string(),
   sourceLine: z.number().int().positive(),
 });

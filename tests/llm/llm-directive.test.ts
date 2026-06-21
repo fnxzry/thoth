@@ -48,7 +48,7 @@ d("@llm directive end-to-end (real network)", () => {
         [
           "# Summary",
           "",
-          "@llm summary",
+          "@llm:summary",
           "context:",
           "  - context.md",
           "prompt: |",
@@ -98,7 +98,7 @@ d("@llm directive end-to-end (real network)", () => {
       const templatePath = join(tmpDir, "t.md");
       writeFileSync(
         templatePath,
-        "@llm greet\nprompt: |\n  Reply with exactly one short word, no punctuation.\n@end\n",
+        "@llm:greet\nprompt: |\n  Reply with exactly one short word, no punctuation.\n@end\n",
         "utf8",
       );
 
@@ -124,6 +124,84 @@ d("@llm directive end-to-end (real network)", () => {
 
       expect(rendered.trim().length).toBeGreaterThan(0);
       expect(rendered.length).toBeLessThan(50);
+    } finally {
+      if (existsSync(tmpDir)) {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
+
+  it("renders a one-liner @llm directive through the engine", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "thoth-llm-oneliner-"));
+    try {
+      const templatePath = join(tmpDir, "t.md");
+      writeFileSync(
+        templatePath,
+        "@llm Reply with exactly one short word, no punctuation.\n",
+        "utf8",
+      );
+
+      const provider = new OpenAIProvider({
+        apiKey: env.apiKey,
+        baseUrl: env.baseUrl,
+      });
+
+      const text = readFileSync(templatePath, "utf8");
+      const rendered = await render(text, {
+        templateDir: tmpDir,
+        config: {
+          ...defaultConfig,
+          llm: {
+            ...defaultConfig.llm,
+            apiKey: env.apiKey,
+            baseUrl: env.baseUrl,
+            defaultModel: env.model,
+          },
+        },
+        llmProvider: provider,
+      });
+
+      expect(rendered.trim().length).toBeGreaterThan(0);
+      expect(rendered.length).toBeLessThan(80);
+    } finally {
+      if (existsSync(tmpDir)) {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
+
+  it("renders a labeled one-liner @llm directive through the engine", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "thoth-llm-labeled-"));
+    try {
+      const templatePath = join(tmpDir, "t.md");
+      writeFileSync(
+        templatePath,
+        "@llm:greet Reply with exactly one short word, no punctuation.\n",
+        "utf8",
+      );
+
+      const provider = new OpenAIProvider({
+        apiKey: env.apiKey,
+        baseUrl: env.baseUrl,
+      });
+
+      const text = readFileSync(templatePath, "utf8");
+      const rendered = await render(text, {
+        templateDir: tmpDir,
+        config: {
+          ...defaultConfig,
+          llm: {
+            ...defaultConfig.llm,
+            apiKey: env.apiKey,
+            baseUrl: env.baseUrl,
+            defaultModel: env.model,
+          },
+        },
+        llmProvider: provider,
+      });
+
+      expect(rendered.trim().length).toBeGreaterThan(0);
+      expect(rendered.length).toBeLessThan(80);
     } finally {
       if (existsSync(tmpDir)) {
         rmSync(tmpDir, { recursive: true, force: true });

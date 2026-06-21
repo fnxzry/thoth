@@ -32,8 +32,8 @@ describe("static directive (module side effects)", () => {
       block: {
         kind: "directive" as const,
         name: "static",
-        id: "x",
-        attributes: {},
+        label: "x",
+        primaryParameter: "",
         body: "verbatim content",
         sourceLine: 1,
       },
@@ -54,8 +54,8 @@ describe("static directive (module side effects)", () => {
       block: {
         kind: "directive" as const,
         name: "static",
-        id: "x",
-        attributes: {},
+        label: "x",
+        primaryParameter: "",
         body: "",
         sourceLine: 1,
       },
@@ -68,6 +68,28 @@ describe("static directive (module side effects)", () => {
     };
     const result = await impl(ctx);
     expect(result.text).toBe("");
+  });
+
+  it("ignores the label and primary parameter", async () => {
+    const impl = get("static");
+    const ctx = {
+      block: {
+        kind: "directive" as const,
+        name: "static",
+        label: "some-label",
+        primaryParameter: "primary-value",
+        body: "body only",
+        sourceLine: 7,
+      },
+      resolveContext: async () => new Map<string, string>(),
+      callLlm: async () => {
+        throw new Error("not implemented");
+      },
+      config: fakeConfig,
+      templateDir: "/tmp",
+    };
+    const result = await impl(ctx);
+    expect(result.text).toBe("body only");
   });
 });
 
@@ -84,13 +106,18 @@ describe("include directive (module side effects)", () => {
     }
   });
 
-  function makeCtx(templateDir: string, id: string, sourceLine = 1) {
+  function makeCtx(
+    templateDir: string,
+    primaryParameter: string,
+    label = "",
+    sourceLine = 1,
+  ) {
     return {
       block: {
         kind: "directive" as const,
         name: "include",
-        id,
-        attributes: {},
+        label,
+        primaryParameter,
         body: "",
         sourceLine,
       },
@@ -145,9 +172,31 @@ describe("include directive (module side effects)", () => {
     expect(result.text).toBe("with newline\n");
   });
 
-  it("throws when the id is empty", async () => {
+  it("exposes the label on the block but does not affect path resolution", async () => {
+    const path = join(tmpDir, "labeled.md");
+    writeFileSync(path, "labeled content", "utf8");
+
+    const impl = get("include");
+    const result = await impl(makeCtx(tmpDir, "labeled.md", "my-label"));
+    expect(result.text).toBe("labeled content");
+  });
+
+  it("throws when the primary parameter is empty", async () => {
     const impl = get("include");
     await expect(impl(makeCtx(tmpDir, ""))).rejects.toThrowError(/no path/);
+  });
+
+  it("names the directive and source line when the primary parameter is empty", async () => {
+    const impl = get("include");
+    let caught: unknown;
+    try {
+      await impl(makeCtx(tmpDir, "", "", 42));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).message).toContain("@include");
+    expect((caught as { line?: number }).line).toBe(42);
   });
 
   it("throws a clear error when the referenced file does not exist", async () => {
