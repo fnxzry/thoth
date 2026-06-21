@@ -14,6 +14,11 @@ This file summarizes the project documentation. It includes a list of all import
 **Summary:** The tool's technical architecture: module boundaries, type definitions, directive grammar, cache key spec, config schema, env var precedence, and CLI grammar.
 **When to read:** When implementing, reviewing, or extending any part of the tool. This is the contract that code must satisfy.
 
+### `docs/elaborations/each-directive.md`
+
+**Summary:** Full design elaboration for the `@each` directive — a block-repeater that iterates over glob-matched files, renders a template body per file with variable substitution, and supports nested directives.
+**When to read:** When implementing, reviewing, or extending the `@each` directive.
+
 ### `docs/testing.md`
 
 **Summary:** Overview of the project's two-tier test strategy (unit + LLM-graded) and how to run each.

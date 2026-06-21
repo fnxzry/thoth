@@ -25,7 +25,8 @@ src/
 │   ├── index.ts     # directive registry: register(name, impl)
 │   ├── static.ts    # default; pass-through
 │   ├── include.ts   # reads a referenced file and inlines its contents
-│   └── llm.ts       # calls LlmProvider, optionally consults cache
+│   ├── llm.ts       # calls LlmProvider, optionally consults cache
+│   └── each.ts      # iterates over glob-matched files, renders body per file
 ├── llm/
 │   ├── provider.ts  # LlmProvider interface
 │   └── openai.ts    # OpenAI implementation (supports custom baseUrl + apiKey)
@@ -50,9 +51,12 @@ type Block =
 // @end line).
 interface DirectiveContext {
   block: Block;                       // the directive block being rendered
+  templateDir: string;                // directory of the template file (for resolving relative paths)
   resolveContext(paths: string[]): Promise<Map<string, string>>;
   callLlm(req: LlmRequest): Promise<LlmResponse>;
+  renderTemplate(template: string): Promise<DirectiveResult>;
   config: ResolvedConfig;
+  cache?: LlmCache;                   // content-addressed cache (when enabled)
 }
 
 interface DirectiveResult {
@@ -130,6 +134,10 @@ Built-in directives:
 - `@llm <prompt>` — primary parameter is the prompt. Body parameters:
   `context:` (list of file paths), `model:` (model override).
   The label identifies the block for caching.
+- `@each <glob>` — primary parameter is a glob pattern. Body is a template
+  repeated once per matched file. Body parameters: `as:` (variable renames),
+  `join:` (iteration separator). Supports nested directives.
+  See `docs/elaborations/each-directive.md`.
 - `@static` — the body is the verbatim text to inline; no primary
   parameter, so only multi-line form.
 
@@ -146,9 +154,33 @@ context:
 prompt: |
   Summarize this document in two paragraphs.
 @end
+
+@each docs/*.md
+## {{name}}
+
+@llm
+context:
+  - {{path}}
+prompt: Summarize this document in one sentence.
+@end
+
+---
+@end
 ```
 
 The `static` directive is implicit: any text not inside a `@<directive>...@end` block is treated as static.
+
+### Primary-content body convention
+
+Directive bodies can serve dual purposes: YAML configuration and primary content.
+The `@---` delimiter (a line containing only `@---`) separates the two:
+
+- A body **without** `@---` is treated entirely as primary content.
+- A body **with** `@---` has YAML parameters above and primary content below.
+
+This allows `@llm` to accept its prompt as body text (`@llm\nSummarize...\n@end`),
+and `@each` to accept its template as body text. The convention is available to
+all directives.
 
 Directive registry contract:
 
