@@ -1,8 +1,13 @@
 {
-  "name": "thoth",
+  "name": "@fnxzry/thoth",
   "version": "0.1.0",
-  "description": "Text generation tool with file includes and LLM-summarized blocks.",
+  "description": "A CLI tool that generates documents from static text, file includes, and LLM-generated blocks.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fnxzry/thoth.git"
+  },
+  "keywords": ["cli", "documentation", "template", "llm", "markdown"],
   "bin": {
     "thoth": "./dist/cli.js"
   },
@@ -19,6 +24,7 @@
     "test:watch": "vitest",
     "test:llm": "vitest run --config vitest.llm.config.ts",
     "lint": "eslint --no-error-on-unmatched-pattern \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "prepublishOnly": "npm run build && npm test",
     "dev": "tsx src/cli.ts"
   },
   "dependencies": {
@@ -37,6 +43,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT"
 }
