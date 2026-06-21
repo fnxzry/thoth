@@ -6,6 +6,7 @@ export interface ParsedDirectiveBody {
   yamlParams: Record<string, string>;
   primaryContent: string;
   contextPaths: string[];
+  asMapping: Record<string, string>;
 }
 
 export class BodyParserError extends Error {
@@ -40,12 +41,13 @@ function bodyStartsWithYamlAttr(body: string): boolean {
 function parseYamlSection(
   raw: string,
   sourceLine?: number,
-): { attrs: Record<string, string>; contextPaths: string[] } {
-  if (raw === "") return { attrs: {}, contextPaths: [] };
+): { attrs: Record<string, string>; contextPaths: string[]; asMapping: Record<string, string> } {
+  if (raw === "") return { attrs: {}, contextPaths: [], asMapping: {} };
 
   const lines = raw.split("\n");
   const attrs: Record<string, string> = {};
   const contextPaths: string[] = [];
+  const asMapping: Record<string, string> = {};
   let i = 0;
 
   while (i < lines.length) {
@@ -67,6 +69,49 @@ function parseYamlSection(
 
     const key = match[1];
     const rawValue = match[2];
+
+    if (key === "as") {
+      if (rawValue.trim() !== "") {
+        throw new BodyParserError(
+          sourceLine !== undefined
+            ? `"as:" at source line ${sourceLine} must be followed by key: value pairs`
+            : `"as:" must be followed by key: value pairs`,
+          { line: sourceLine },
+        );
+      }
+      i++;
+      while (i < lines.length) {
+        const asLine = lines[i];
+        if (asLine.trim() === "") {
+          i++;
+          continue;
+        }
+        if (!/^\s/.test(asLine)) break;
+        const trimmed = asLine.trim();
+        const colonIdx = trimmed.indexOf(":");
+        if (colonIdx === -1) {
+          throw new BodyParserError(
+            sourceLine !== undefined
+              ? `Invalid as: entry at source line ${sourceLine}: ${JSON.stringify(trimmed)}`
+              : `Invalid as: entry: ${JSON.stringify(trimmed)}`,
+            { line: sourceLine },
+          );
+        }
+        const asKey = trimmed.slice(0, colonIdx).trim();
+        const asValue = trimmed.slice(colonIdx + 1).trim();
+        if (!asKey || !asValue) {
+          throw new BodyParserError(
+            sourceLine !== undefined
+              ? `Invalid as: entry at source line ${sourceLine}: ${JSON.stringify(trimmed)}`
+              : `Invalid as: entry: ${JSON.stringify(trimmed)}`,
+            { line: sourceLine },
+          );
+        }
+        asMapping[asKey] = asValue;
+        i++;
+      }
+      continue;
+    }
 
     if (key === "context") {
       if (rawValue.trim() !== "") {
@@ -91,6 +136,28 @@ function parseYamlSection(
           continue;
         }
         break;
+      }
+      continue;
+    }
+
+    if (rawValue === "") {
+      i++;
+      const nestedLines: string[] = [];
+      while (i < lines.length) {
+        const l = lines[i];
+        if (l.trim() === "") {
+          nestedLines.push("");
+          i++;
+          continue;
+        }
+        if (!/^\s/.test(l)) break;
+        nestedLines.push(l.trim());
+        i++;
+      }
+      if (nestedLines.length > 0) {
+        attrs[key] = nestedLines.join("\n");
+      } else {
+        attrs[key] = "";
       }
       continue;
     }
@@ -133,7 +200,40 @@ function parseYamlSection(
     }
   }
 
-  return { attrs, contextPaths };
+  return { attrs, contextPaths, asMapping };
+}
+
+export function validateAsMapping(
+  mapping: Record<string, string>,
+  canonicalNames: Set<string>,
+  sourceLine?: number,
+): void {
+  for (const [key, value] of Object.entries(mapping)) {
+    if (!canonicalNames.has(key)) {
+      throw new BodyParserError(
+        sourceLine !== undefined
+          ? `Unknown canonical variable "${key}" in as: at source line ${sourceLine}`
+          : `Unknown canonical variable "${key}" in as:`,
+        { line: sourceLine },
+      );
+    }
+    if (!ATTR_KEY_PATTERN.test(value)) {
+      throw new BodyParserError(
+        sourceLine !== undefined
+          ? `Invalid identifier "${value}" in as: at source line ${sourceLine}`
+          : `Invalid identifier "${value}" in as:`,
+        { line: sourceLine },
+      );
+    }
+  }
+}
+
+export function resolveAsVar(
+  mapping: Record<string, string> | undefined,
+  canonical: string,
+): string {
+  if (mapping && mapping[canonical]) return mapping[canonical];
+  return canonical;
 }
 
 export function parseDirectiveBody(
@@ -150,14 +250,14 @@ export function parseDirectiveBody(
     const yamlSection = yamlSectionLines.join("\n");
     const primaryContent = contentLines.join("\n");
 
-    const { attrs: yamlParams, contextPaths } = parseYamlSection(yamlSection, sourceLine);
-    return { yamlParams, primaryContent, contextPaths };
+    const { attrs: yamlParams, contextPaths, asMapping } = parseYamlSection(yamlSection, sourceLine);
+    return { yamlParams, primaryContent, contextPaths, asMapping };
   }
 
   if (bodyStartsWithYamlAttr(rawBody)) {
-    const { attrs: yamlParams, contextPaths } = parseYamlSection(rawBody, sourceLine);
-    return { yamlParams, primaryContent: "", contextPaths };
+    const { attrs: yamlParams, contextPaths, asMapping } = parseYamlSection(rawBody, sourceLine);
+    return { yamlParams, primaryContent: "", contextPaths, asMapping };
   }
 
-  return { yamlParams: {}, primaryContent: rawBody, contextPaths: [] };
+  return { yamlParams: {}, primaryContent: rawBody, contextPaths: [], asMapping: {} };
 }

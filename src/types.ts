@@ -72,9 +72,12 @@ import type { LlmCache } from "./cache.js";
 export interface DirectiveContext {
   label: string;
   sourceLine: number;
+  primaryParameter: string;
   params: Record<string, string | string[]>;
+  asMapping: Record<string, string>;
   resolveContext(paths: string[]): Promise<Map<string, string>>;
   callLlm(req: LlmRequest): Promise<LlmResponse>;
+  renderTemplate(template: string): Promise<DirectiveResult>;
   config: ResolvedConfig;
   templateDir: string;
   cache?: LlmCache;

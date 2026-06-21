@@ -102,7 +102,9 @@ export async function render(
       const directiveCtx: DirectiveContext = {
         label: block.label,
         sourceLine: block.sourceLine,
+        primaryParameter: block.primaryParameter,
         params,
+        asMapping: parsed.asMapping,
         resolveContext: async (paths) => {
           const out = new Map<string, string>();
           for (const p of paths) {
@@ -111,6 +113,10 @@ export async function render(
           return out;
         },
         callLlm: (req) => ctx.llmProvider.complete(req),
+        renderTemplate: async (template: string) => {
+          const rendered = await render(template, ctx);
+          return { text: rendered };
+        },
         config: ctx.config,
         templateDir: ctx.templateDir,
         ...(cache ? { cache } : {}),

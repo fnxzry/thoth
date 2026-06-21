@@ -7,7 +7,13 @@
     "type": "git",
     "url": "https://github.com/fnxzry/thoth.git"
   },
-  "keywords": ["cli", "documentation", "template", "llm", "markdown"],
+  "keywords": [
+    "cli",
+    "documentation",
+    "template",
+    "llm",
+    "markdown"
+  ],
   "bin": {
     "thoth": "./dist/cli.js"
   },
@@ -32,7 +38,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/node": "^20.14.2",
+    "@types/node": "^22.20.0",
     "@typescript-eslint/parser": "^8.61.1",
     "eslint": "^9.39.4",
     "globals": "^15.15.0",
